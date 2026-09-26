@@ -1,0 +1,284 @@
+[
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Balancing",
+    "code": "BAL",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Bingo",
+    "code": "BNG",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Box Count",
+    "code": "BX",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Break",
+    "code": "X",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Break Room Duty",
+    "code": "BR",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Cards",
+    "code": "C",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Chipper",
+    "code": "CH",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Day Off",
+    "code": "OFF",
+    "entry_rule": "Enter once per 24-hour period"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Finish",
+    "code": "F",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Late",
+    "code": "LT",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Medical Break 15 min",
+    "code": "MD",
+    "entry_rule": "Enter for every 15-minute interval"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Medical Break 15 min",
+    "code": "EMB",
+    "entry_rule": "Enter for every 15-minute interval"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Medical Off 24h",
+    "code": "MED",
+    "entry_rule": "Enter once per 24-hour period"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Night - Off",
+    "code": "NOFF",
+    "entry_rule": "Enter once per 24-hour period"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Night - Off",
+    "code": "NOF",
+    "entry_rule": "Enter once per 24-hour period"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Office",
+    "code": "OFC",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "On the Floor",
+    "code": "FL",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "On the Pit",
+    "code": "PIT",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Other Duty",
+    "code": "OD",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Stacker Count",
+    "code": "SC",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Stacker Pull",
+    "code": "SP",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Training",
+    "code": "TR",
+    "entry_rule": "Specific code only"
+  },
+  {
+    "category": "ADMINISTRATIVE TASKS",
+    "task_name": "Deal No Deal",
+    "code": "DND",
+    "entry_rule": "Number or code only"
+  },
+  {
+    "category": "BACCARAT GAMES",
+    "task_name": "Mini Baccarat",
+    "code": "MB1-MB10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "21 + 3",
+    "code": "BT1-BT10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "Down Under",
+    "code": "DU1-DU10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "Face Up",
+    "code": "FB1-FB10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "Fun21",
+    "code": "F1-F10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "Pantun/Pontoon",
+    "code": "PN1-PN10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "BLACKJACK GAMES",
+    "task_name": "Standard Blackjack",
+    "code": "B1-B10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "All Stud",
+    "code": "AS1",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Caribbean Stud",
+    "code": "SP1-SP10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Dueling for Dollars",
+    "code": "DD1DD10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Heads Up Hold'em",
+    "code": "HH1-HH10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Heads Up Hold'em",
+    "code": "H1-H10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Let It Ride",
+    "code": "LR1-LR10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Ocean Poker",
+    "code": "OP1-OP10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Three Card Poker",
+    "code": "T1-T10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Three Card Poker",
+    "code": "TC1-TC10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "POKER GAMES",
+    "task_name": "Ultimate Texas Hold'em",
+    "code": "PK1-PK10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "ROULETTE GAMES",
+    "task_name": "American Roulette",
+    "code": "RW1-RW10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "ROULETTE GAMES",
+    "task_name": "American Roulette",
+    "code": "R1-R10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "SPECIALTY GAMES",
+    "task_name": "Dice Table (Single)",
+    "code": "1, 2, ST",
+    "entry_rule": "Number or code only"
+  },
+  {
+    "category": "SPECIALTY GAMES",
+    "task_name": "Dice Tables (Multi-Pit)",
+    "code": "1A, 2A, STA / 1B, 2B, STB / 1C, 2C, STC",
+    "entry_rule": "Pit identifier suffix"
+  },
+  {
+    "category": "SPECIALTY GAMES",
+    "task_name": "Fortune Wheel",
+    "code": "FW1-FW10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "SPECIALTY GAMES",
+    "task_name": "High Card Flush",
+    "code": "HF1-HF10",
+    "entry_rule": "Letter prefix + number"
+  },
+  {
+    "category": "SPECIALTY GAMES",
+    "task_name": "Sic Bo",
+    "code": "SB1-SB10",
+    "entry_rule": "Letter prefix + number"
+  }
+]

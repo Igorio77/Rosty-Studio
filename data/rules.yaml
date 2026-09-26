@@ -1,0 +1,36 @@
+rules:
+- id: crew_id_format
+  enabled: true
+  severity: hard
+  params:
+    pattern: ^[0-9]+$
+- id: duplicate_assignment
+  enabled: true
+  severity: hard
+  params: {}
+- id: max_length
+  enabled: true
+  severity: hard
+  params:
+    resource_max_len: 50
+    comment_max_len: 100
+- id: position_rotation_eligibility
+  enabled: true
+  severity: hard
+  params:
+    allowed_subdepartments: Dealers
+- id: position_time_step
+  enabled: true
+  severity: soft
+  params:
+    time_step_minutes: 15
+- id: rest_period
+  enabled: true
+  severity: hard
+  params:
+    min_rest_hours: 10.0
+- id: weekly_hours_threshold
+  enabled: true
+  severity: soft
+  params:
+    max_weekly_hours: 77.0

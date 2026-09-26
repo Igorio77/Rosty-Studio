@@ -1,0 +1,122 @@
+"""Left sidebar navigation — replaces the old top QTabWidget tabs.
+
+Visual reference: reference/RostaStudioSchedule.jsx's `Sidebar` component
+and its `.sidebar`/`.sidebar-item` CSS — porting that look is now in scope
+(see CLAUDE.md, "Reference material"), not its React code. Same numbers as
+that CSS: 64px collapsed / 226px expanded, 42px pill-shaped items, a
+bordered-off bottom group for Settings (the reference's About/Guide aren't
+built yet, so the bottom group here is just Settings for now).
+
+The reference's per-nav-item icon recoloring on ``is-active`` (icon and
+label both turn accent-colored) isn't replicated — Qt would need a custom
+item delegate for that; the pill background + accent-colored *label* text
+(via QSS `::item:selected`) already reads clearly as "selected" without it.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+
+from . import icons
+
+COLLAPSED_WIDTH = 64
+EXPANDED_WIDTH = 226
+ITEM_HEIGHT = 42
+
+# (key, icon name, label) — key order here is also the QStackedWidget page
+# order MainWindow builds, so NAV_ITEMS is the one place that mapping lives.
+# "Schedule" hosts the Year/Month/Custom/Day scale switcher (see
+# schedule_calendar_panel.py) — Custom view and Day view moved inside it, so
+# they're no longer separate top-level items. "Assignments" is the older
+# flat list (still useful as a raw audit view / rule-engine demo).
+MAIN_NAV_ITEMS = [
+    ("staff", "staff", "Team"),  # nav key stays "staff" (MainWindow's page-order key); only the label changed
+    ("templates", "templates", "Templates"),
+    ("schedule", "schedule", "Schedule"),
+]
+# The old flat "Assignments" audit list is deliberately not in the nav —
+# the user's plan is a dedicated Assignments Log later, with its own logic;
+# `SchedulePanel` (schedule_panel.py) still exists and is still tested, just
+# not mounted anywhere right now.
+BOTTOM_NAV_ITEMS = [
+    ("settings", "settings", "Settings"),
+]
+NAV_ITEMS = MAIN_NAV_ITEMS + BOTTOM_NAV_ITEMS
+
+
+def _build_list(items: list[tuple[str, str, str]], icon_color: str) -> QListWidget:
+    lst = QListWidget()
+    lst.setObjectName("sidebarNav")
+    lst.setIconSize(QSize(20, 20))
+    lst.setFocusPolicy(Qt.NoFocus)
+    lst.setFrameShape(QListWidget.NoFrame)
+    lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    lst.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    for key, icon_name, label in items:
+        item = QListWidgetItem(icons.icon(icon_name, icon_color), label)
+        item.setData(Qt.UserRole, key)
+        item.setSizeHint(QSize(0, ITEM_HEIGHT))
+        lst.addItem(item)
+    return lst
+
+
+class Sidebar(QWidget):
+    page_selected = Signal(str)  # emits the nav item key
+
+    def __init__(self, icon_color: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("sidebar")
+        self._expanded = True
+
+        self._toggle_button = QPushButton("☰")  # hamburger glyph
+        self._toggle_button.setObjectName("sidebarToggle")
+        self._toggle_button.setFixedSize(40, 40)
+        self._toggle_button.setCursor(Qt.PointingHandCursor)
+        self._toggle_button.setToolTip("Collapse sidebar")
+        self._toggle_button.clicked.connect(self._toggle)
+
+        self.main_list = _build_list(MAIN_NAV_ITEMS, icon_color)
+        self.bottom_list = _build_list(BOTTOM_NAV_ITEMS, icon_color)
+        # Only one of the two lists ever has a selection — clicking in one
+        # clears the other, so there's a single visible "active" item across
+        # both groups, same as the reference's single `activeItem` value.
+        self.main_list.currentRowChanged.connect(lambda row: self._on_selected(self.main_list, self.bottom_list, row))
+        self.bottom_list.currentRowChanged.connect(lambda row: self._on_selected(self.bottom_list, self.main_list, row))
+
+        divider = QFrame()
+        divider.setObjectName("sidebarDivider")
+        divider.setFixedHeight(1)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.setContentsMargins(12, 12, 12, 8)
+        toggle_row.addWidget(self._toggle_button)
+        toggle_row.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 12)
+        layout.setSpacing(0)
+        layout.addLayout(toggle_row)
+        layout.addWidget(self.main_list, stretch=1)
+        layout.addWidget(divider)
+        layout.addWidget(self.bottom_list)
+
+        self.setFixedWidth(EXPANDED_WIDTH)
+        self.main_list.setCurrentRow(0)
+
+    def _on_selected(self, active_list: QListWidget, other_list: QListWidget, row: int) -> None:
+        if row < 0:
+            return
+        other_list.blockSignals(True)
+        other_list.setCurrentRow(-1)
+        other_list.blockSignals(False)
+        key = active_list.item(row).data(Qt.UserRole)
+        self.page_selected.emit(key)
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        for lst, items in ((self.main_list, MAIN_NAV_ITEMS), (self.bottom_list, BOTTOM_NAV_ITEMS)):
+            for i, (_, _, label) in enumerate(items):
+                lst.item(i).setText(label if self._expanded else "")
+        self.setFixedWidth(EXPANDED_WIDTH if self._expanded else COLLAPSED_WIDTH)
+        self._toggle_button.setToolTip("Collapse sidebar" if self._expanded else "Expand sidebar")
