@@ -1,8 +1,8 @@
-"""Dark theme stylesheet and the token tables it is built from.
+"""Theme stylesheet and the token tables it is built from.
 
-Colors are the Rosta Studio dark ramp from
-reference/RostaStudioSchedule.jsx (its `NEUTRALS.dark` and
-`ACCENTS.blue.dark`). Porting that prototype's visual look — colors,
+Colors are the Rosta Studio ramps from reference/RostaStudioSchedule.jsx:
+dark and light neutrals plus five switchable accents. The module starts on
+dark + blue; `apply_theme()` switches to the user's saved choice. Porting that prototype's visual look — colors,
 sidebar layout, spacing — is in scope per CLAUDE.md, "Reference material"
 (decided 2026-09-25).
 
@@ -77,6 +77,110 @@ COLORS = {
     "success": "#81c995",
     "warning": "#fdd663",
 }
+
+# Both neutral ramps, straight from the reference's SURFACE_THEMES. The
+# light ramp has no success/warning of its own, so it borrows the light
+# green and amber accents from ACCENT_THEMES below.
+_NEUTRALS = {
+    "dark": {
+        "surfaces": ["#131314", "#1e1f20", "#28292a", "#303134", "#3c3d40"],
+        "border": "rgba(255, 255, 255, 0.09)",
+        "border_strong": "rgba(255, 255, 255, 0.16)",
+        "text_primary": "#e8eaed",
+        "text_secondary": "#9aa0a6",
+        "text_tertiary": "#5f6368",
+        "danger": "#f28b82",
+        "danger_soft": "rgba(242, 139, 130, 0.15)",
+        "success": "#81c995",
+        "warning": "#fdd663",
+    },
+    "light": {
+        "surfaces": ["#eef0f2", "#ffffff", "#f6f7f8", "#eceef0", "#e1e3e6"],
+        "border": "rgba(0, 0, 0, 0.09)",
+        "border_strong": "rgba(0, 0, 0, 0.16)",
+        "text_primary": "#1f1f1f",
+        "text_secondary": "#5f6368",
+        "text_tertiary": "#80868b",
+        "danger": "#d93025",
+        "danger_soft": "rgba(217, 48, 37, 0.08)",
+        "success": "#1e8e4a",
+        "warning": "#a6720a",
+    },
+}
+
+# The five switchable accents, per mode, from the reference's COLOR_THEMES.
+ACCENT_THEMES = {
+    "blue": {
+        "name": "Blue",
+        "dark": ("#8ab4f8", "#aecbfa", "#062e6f", "rgba(138, 180, 248, 0.16)"),
+        "light": ("#3b6fd6", "#2955ad", "#ffffff", "rgba(59, 111, 214, 0.12)"),
+    },
+    "green": {
+        "name": "Green",
+        "dark": ("#81c995", "#a8dab5", "#0b3d1e", "rgba(129, 201, 149, 0.16)"),
+        "light": ("#1e8e4a", "#166937", "#ffffff", "rgba(30, 142, 74, 0.12)"),
+    },
+    "purple": {
+        "name": "Purple",
+        "dark": ("#c58af9", "#d7aefb", "#3a0d63", "rgba(197, 138, 249, 0.16)"),
+        "light": ("#8430ce", "#6b23a8", "#ffffff", "rgba(132, 48, 206, 0.12)"),
+    },
+    "rose": {
+        "name": "Rose",
+        "dark": ("#f6a3ae", "#f8bcc4", "#5c0a1c", "rgba(246, 163, 174, 0.18)"),
+        "light": ("#d23a63", "#ab2c4f", "#ffffff", "rgba(210, 58, 99, 0.12)"),
+    },
+    "amber": {
+        "name": "Amber",
+        "dark": ("#fdd663", "#fde293", "#4a3400", "rgba(253, 214, 99, 0.16)"),
+        "light": ("#a6720a", "#845a08", "#ffffff", "rgba(166, 114, 10, 0.12)"),
+    },
+}
+
+
+def apply_theme(mode: str, accent: str) -> None:
+    """Switch the active tokens to `mode` ("dark"/"light") and `accent`.
+
+    Mutates SURFACE and COLORS *in place*, so every module that imported
+    them keeps seeing the live values. Widgets that already baked a color
+    into a local stylesheet keep the old one until they are rebuilt — the
+    main window is rebuilt after a switch for exactly that reason.
+    """
+    neutrals = _NEUTRALS.get(mode, _NEUTRALS["dark"])
+    accent_theme = ACCENT_THEMES.get(accent, ACCENT_THEMES["blue"])
+    accent_hex, accent_hover, accent_on, accent_soft = accent_theme[mode if mode in _NEUTRALS else "dark"]
+
+    for step, value in enumerate(neutrals["surfaces"]):
+        SURFACE[step] = value
+    COLORS.update(
+        bg_app=SURFACE[0],
+        bg_surface=SURFACE[1],
+        bg_surface_alt=SURFACE[2],
+        bg_control=SURFACE[3],
+        bg_hover=SURFACE[4],
+        bg_active=SURFACE[4],
+        border=neutrals["border"],
+        border_subtle=neutrals["border"],
+        border_default=neutrals["border"],
+        border_strong=neutrals["border_strong"],
+        text_primary=neutrals["text_primary"],
+        text_secondary=neutrals["text_secondary"],
+        text_tertiary=neutrals["text_tertiary"],
+        accent=accent_hex,
+        accent_hover=accent_hover,
+        accent_on=accent_on,
+        accent_soft=accent_soft,
+        danger=neutrals["danger"],
+        danger_soft=neutrals["danger_soft"],
+        success=neutrals["success"],
+        warning=neutrals["warning"],
+    )
+
+
+def accent_swatch(accent: str, mode: str) -> str:
+    """The solid color that represents `accent` in `mode`, for the picker."""
+    theme = ACCENT_THEMES.get(accent, ACCENT_THEMES["blue"])
+    return theme[mode if mode in _NEUTRALS else "dark"][0]
 
 # Fixed 5-color palette for Template chips (core/templates.TEMPLATE_COLORS),
 # same hues as reference/RostaStudioSchedule.jsx's dark-mode tpl-*-dot
@@ -186,6 +290,17 @@ def stylesheet() -> str:
         selection-color: {c['accent']};
         border: 1px solid {c['border']};
         border-radius: 8px;
+    }}
+    /* The viewport is a plain child QWidget, so the base QWidget rule paints
+       the app canvas into every table's empty area unless this overrides it. */
+    QTableView QWidget#qt_scrollarea_viewport {{
+        background: {c['bg_surface']};
+    }}
+    /* The header strip past its last section; without this it shows the
+       app canvas as a dark band next to the column headers. */
+    QHeaderView {{
+        background: {c['bg_surface_alt']};
+        border: none;
     }}
     QHeaderView::section {{
         background: {c['bg_surface_alt']};
@@ -519,7 +634,10 @@ def stylesheet() -> str:
     QListWidget#sidebarNav::item {{
         height: 42px;
         padding-left: 10px;
-        border-radius: 21px;
+        /* Same shape as the Settings category list. Keep the radius under
+           half the painted height (42px item - 2px margin): Qt silently
+           drops a larger radius and paints square corners. */
+        border-radius: 8px;
         margin-bottom: 2px;
         color: {c['text_secondary']};
         font-weight: 500;
@@ -531,5 +649,87 @@ def stylesheet() -> str:
     QListWidget#sidebarNav::item:selected {{
         background: {c['accent_soft']};
         color: {c['accent']};
+        font-weight: 600;
+    }}
+    QLabel#sidebarWorkspace {{
+        font-size: 12px;
+        font-weight: 600;
+        color: {c['text_primary']};
+    }}
+
+    /* ---------- shared bits --------------------------------------------------- */
+    /* A plain container QWidget still paints the app canvas color, which
+       shows as a dark patch on a card. Containers that sit on a card set
+       this property instead of carrying their own background. */
+    QWidget[transparentBg="true"] {{
+        background: transparent;
+    }}
+    QLabel[role="title"] {{
+        font-size: 16px;
+        font-weight: 600;
+        padding-left: 8px;
+    }}
+
+    /* ---------- Settings (category list + cards) ------------------------------ */
+    QWidget#settingsNavPane {{
+        background: {c['bg_surface']};
+        border-right: 1px solid {c['border']};
+    }}
+    QListWidget#settingsNav {{
+        background: transparent;
+        border: none;
+        outline: none;
+    }}
+    QListWidget#settingsNav::item {{
+        padding-left: 8px;
+        border-radius: 8px;
+        margin-bottom: 2px;
+        color: {c['text_secondary']};
+        font-weight: 500;
+    }}
+    QListWidget#settingsNav::item:hover {{
+        background: {c['bg_hover']};
+        color: {c['text_primary']};
+    }}
+    QListWidget#settingsNav::item:selected {{
+        background: {c['accent_soft']};
+        color: {c['accent']};
+        font-weight: 600;
+    }}
+    QScrollArea#settingsScroll {{
+        background: {c['bg_app']};
+        border: none;
+    }}
+    QFrame#settingsCard {{
+        background: {c['bg_surface_alt']};
+        border: 1px solid {c['border']};
+        border-radius: 12px;
+    }}
+    QWidget#settingsFooter {{
+        background: {c['bg_surface']};
+        border-top: 1px solid {c['border']};
+    }}
+    /* Dark / Light toggle: the reference's .settings-mode-btn. */
+    QPushButton#segmentButton {{
+        min-width: 88px;
+        padding: 6px 16px;
+    }}
+    QPushButton#segmentButton:checked {{
+        background: {c['accent_soft']};
+        border-color: {c['accent']};
+        color: {c['accent']};
+        font-weight: 600;
+    }}
+    /* Accent swatch: the fill is set per swatch; the ring lives here. */
+    QPushButton#accentSwatch {{
+        border: 2px solid transparent;
+        border-radius: 14px;
+        padding: 0px;
+    }}
+    QPushButton#accentSwatch:hover {{
+        border-color: {c['border_strong']};
+    }}
+    QPushButton#accentSwatch:checked {{
+        border-color: {c['text_primary']};
     }}
     """

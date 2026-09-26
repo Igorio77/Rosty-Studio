@@ -9,12 +9,12 @@ they already live (Templates tab) — no duplication here.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGroupBox, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
 
 from rostify.core.templates import SubdepartmentOption
 from rostify.services.persistence import Repository
 
-from .widgets import IconTableEditor, SimpleFormDialog
+from .widgets import IconTableEditor, SettingsCard, SimpleFormDialog
 
 
 class ListControlPanel(QWidget):
@@ -39,16 +39,17 @@ class ListControlPanel(QWidget):
         )
 
         layout = QVBoxLayout(self)
-        for title, editor in (
-            ("Departments", self.department_editor),
-            ("Subdepartments", self.subdepartment_editor),
-            ("Positions", self.position_editor),
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        for title, hint, editor in (
+            ("Departments", "Top-level org units. Right-click a row to edit or delete it.", self.department_editor),
+            ("Subdepartments", "Crew groups inside a department. Templates and shifts belong to one.", self.subdepartment_editor),
+            ("Positions", "Job titles offered when adding or editing an employee.", self.position_editor),
         ):
-            box = QGroupBox(title)
-            box_layout = QVBoxLayout()
-            box_layout.addWidget(editor)
-            box.setLayout(box_layout)
-            layout.addWidget(box)
+            card = SettingsCard(title, hint)
+            editor.setProperty("transparentBg", True)
+            card.body.addWidget(editor)
+            layout.addWidget(card)
 
         self.reload()
 

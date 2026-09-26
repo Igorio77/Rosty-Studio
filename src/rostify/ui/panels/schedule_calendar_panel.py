@@ -40,7 +40,7 @@ class ScheduleCalendarPanel(QTabWidget):
         schedule: Schedule,
         repository: Repository,
         rule_engine: RuleEngine | None = None,
-        accent_hex: str = COLORS["accent"],
+        accent_hex: str | None = None,
         on_change: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:

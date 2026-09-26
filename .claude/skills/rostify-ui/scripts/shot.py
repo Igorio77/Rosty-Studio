@@ -10,6 +10,7 @@ and nothing steals focus.
     python .claude/skills/rostify-ui/scripts/shot.py --all --width 1600 --height 1000
     python .claude/skills/rostify-ui/scripts/shot.py schedule --show
     python .claude/skills/rostify-ui/scripts/shot.py --all --headless   # CI, no display
+    python .claude/skills/rostify-ui/scripts/shot.py settings/rules settings/appearance --mode light --accent green
 
 Images land in <project>/.ui-shots/ (add it to .gitignore).
 
@@ -43,18 +44,13 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from rostify.rules.registry import RuleRegistry  # noqa: E402
+from rostify.services.app_settings import AppSettings  # noqa: E402
 from rostify.services.config import build_rule_engine  # noqa: E402
 from rostify.services.persistence import Repository  # noqa: E402
-from rostify.services.seed_data import (  # noqa: E402
-    demo_assignments,
-    demo_employees,
-    seed_location_codes,
-    seed_lookup_lists,
-    seed_templates,
-)
+from rostify.services.seed_data import seed_first_run, seed_location_codes  # noqa: E402
 from rostify.ui.main_window import MainWindow  # noqa: E402
 from rostify.ui.sidebar import BOTTOM_NAV_ITEMS, MAIN_NAV_ITEMS, NAV_ITEMS  # noqa: E402
-from rostify.ui.theme import stylesheet  # noqa: E402
+from rostify.ui.theme import apply_theme, stylesheet  # noqa: E402
 
 # Friendlier names for the nav keys, so `shot.py team` works as well as
 # `shot.py staff`. Keys themselves come from sidebar.NAV_ITEMS.
@@ -66,27 +62,7 @@ def seed(data_dir: Path) -> tuple:
     repository = Repository(data_dir / "rostify.db")
     schedule = repository.load_schedule()
 
-    for employee in demo_employees():
-        schedule.add_employee(employee)
-    for assignment in demo_assignments():
-        schedule.add_assignment(assignment)
-    repository.save_schedule(schedule)
-
-    departments, subdepartments, positions = seed_lookup_lists()
-    for department in departments:
-        repository.save_department(department)
-    for subdepartment in subdepartments:
-        repository.save_subdepartment(subdepartment)
-    for position in positions:
-        repository.save_position(position)
-
-    shift_ids, templates, timings = seed_templates()
-    for shift_id in shift_ids:
-        repository.save_shift_id(shift_id)
-    for template in templates:
-        repository.save_template(template)
-    for timing in timings:
-        repository.save_shift_timing(timing)
+    seed_first_run(repository, schedule)
 
     for location_code in seed_location_codes():
         repository.save_location_code(location_code)
@@ -105,6 +81,8 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=1420, help="window width (default 1420)")
     parser.add_argument("--height", type=int, default=820, help="window height (default 820)")
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / ".ui-shots", help="output directory")
+    parser.add_argument("--mode", choices=["dark", "light"], default="dark", help="theme mode (default dark)")
+    parser.add_argument("--accent", default="blue", help="accent: blue, green, purple, rose, amber")
     parser.add_argument("--show", action="store_true", help="put the window on screen while capturing")
     parser.add_argument(
         "--headless",
@@ -117,12 +95,14 @@ def main() -> int:
     if not requested:
         parser.error(f"name at least one page, or pass --all. Pages: {', '.join(nav_keys)}")
 
+    # "settings/rules" captures one Settings category.
     pages = []
     for name in requested:
-        key = ALIASES.get(name, name)
+        key, _, category = name.partition("/")
+        key = ALIASES.get(key, key)
         if key not in nav_keys:
             parser.error(f"unknown page {name!r}. Pages: {', '.join(nav_keys)}")
-        pages.append(key)
+        pages.append((key, category))
 
     args.out.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix="rostify-shot-"))
@@ -130,9 +110,13 @@ def main() -> int:
     try:
         bundle = seed(temp_dir)
         app = QApplication(sys.argv[:1])
+        apply_theme(args.mode, args.accent)
         app.setStyleSheet(stylesheet())
 
-        window = MainWindow(*bundle)
+        # Hand the same mode/accent to the window, so Settings > Appearance
+        # shows the options that are actually applied.
+        app_settings = AppSettings(theme_mode=args.mode, accent=args.accent)
+        window = MainWindow(*bundle, app_settings=app_settings)
         window.resize(args.width, args.height)
         if not args.show:
             # Full layout and paint pass, never mapped to the screen.
@@ -144,8 +128,10 @@ def main() -> int:
         bottom_keys = [key for key, _, _ in BOTTOM_NAV_ITEMS]
 
         written = []
-        for key in pages:
+        for key, category in pages:
             window.stack.setCurrentIndex(nav_keys.index(key))
+            if category:
+                window.settings_panel.select_category(category)
             # Drive the sidebar the way a click does, so the captured nav
             # highlight matches the captured page. Settings lives in the
             # bottom list, so selecting by a single flat index would leave
@@ -159,7 +145,9 @@ def main() -> int:
                 widget.blockSignals(False)
             app.processEvents()
 
-            path = args.out / f"{key}.png"
+            suffix = f"-{category}" if category else ""
+            mode = "" if args.mode == "dark" else f"-{args.mode}"
+            path = args.out / f"{key}{suffix}{mode}.png"
             window.grab().save(str(path))
             written.append(path)
 

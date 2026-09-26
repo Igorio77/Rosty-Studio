@@ -70,6 +70,25 @@ _PATHS = {
         '<rect x="3" y="10.5" width="18" height="4.5" rx="1"/>'
         '<rect x="3" y="17" width="18" height="4.5" rx="1"/>'
     ),
+    # Settings categories.
+    "general": (
+        '<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2"/>'
+        '<line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2"/>'
+        '<line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2"/>'
+    ),
+    "palette": (
+        '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.6 0-.9.7-1.5 1.6-1.5H17'
+        'a4 4 0 0 0 4-4c0-4.6-4-8.2-9-8.2z"/>'
+        '<circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>'
+    ),
+    "tag": (
+        '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/>'
+        '<circle cx="8" cy="8" r="1.5"/>'
+    ),
+    "shield": (
+        '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/>'
+        '<path d="M8.5 12l2.5 2.5 4.5-5"/>'
+    ),
 }
 
 # Glyphs only the stylesheet uses. Drawn with a heavier stroke than the nav

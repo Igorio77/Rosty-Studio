@@ -73,8 +73,13 @@ _SLOT_COL_OFFSET = 4
 _STICKY_HEADERS = ["Shift ID", "Last Name", "First Name", "Employee ID"]
 # Opaque, not translucent: these are handed to QTableWidgetItem.setBackground,
 # where an alpha channel would blend against the window rather than the row.
-_SHIFT_TINT = QColor(mix(COLORS["accent"], SURFACE[1], 0.16))  # this slot is within the employee's shift
-_OUT_OF_SHIFT_BG = QColor(SURFACE[0])  # recessed: outside the shift window, still editable
+# Read at call time, not import time, so a theme switch picks them up.
+def _shift_tint() -> QColor:
+    return QColor(mix(COLORS["accent"], SURFACE[1], 0.16))  # this slot is within the employee's shift
+
+
+def _out_of_shift_bg() -> QColor:
+    return QColor(SURFACE[0])  # recessed: outside the shift window, still editable
 
 
 def _qdate_to_date(qd: QDate) -> date:
@@ -518,7 +523,7 @@ class DayViewPanel(QWidget):
                     # also accepts a typed abbreviation.
                     # Slots outside the employee's shift window are recessed
                     # — still fully editable, just de-emphasized.
-                    item.setBackground(_SHIFT_TINT if covering_shift is not None else _OUT_OF_SHIFT_BG)
+                    item.setBackground(_shift_tint() if covering_shift is not None else _out_of_shift_bg())
                     if covering_shift is None:
                         item.setForeground(QColor(COLORS["text_tertiary"]))
 

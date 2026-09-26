@@ -3,7 +3,7 @@
 Visual reference: reference/RostaStudioSchedule.jsx's `Sidebar` component
 and its `.sidebar`/`.sidebar-item` CSS — porting that look is now in scope
 (see CLAUDE.md, "Reference material"), not its React code. Same numbers as
-that CSS: 64px collapsed / 226px expanded, 42px pill-shaped items, a
+that CSS: 64px collapsed / 226px expanded, 42px items with 8px rounded corners (same as the Settings category list), a
 bordered-off bottom group for Settings (the reference's About/Guide aren't
 built yet, so the bottom group here is just Settings for now).
 
@@ -16,7 +16,16 @@ item delegate for that; the pill background + accent-colored *label* text
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import icons
 
@@ -64,7 +73,7 @@ def _build_list(items: list[tuple[str, str, str]], icon_color: str) -> QListWidg
 class Sidebar(QWidget):
     page_selected = Signal(str)  # emits the nav item key
 
-    def __init__(self, icon_color: str, parent: QWidget | None = None) -> None:
+    def __init__(self, icon_color: str, workspace_name: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("sidebar")
         self._expanded = True
@@ -88,9 +97,15 @@ class Sidebar(QWidget):
         divider.setObjectName("sidebarDivider")
         divider.setFixedHeight(1)
 
+        # The reference's `.profile-workspace`: which schedule this is.
+        self._workspace_label = QLabel(workspace_name)
+        self._workspace_label.setObjectName("sidebarWorkspace")
+
         toggle_row = QHBoxLayout()
         toggle_row.setContentsMargins(12, 12, 12, 8)
+        toggle_row.setSpacing(8)
         toggle_row.addWidget(self._toggle_button)
+        toggle_row.addWidget(self._workspace_label)
         toggle_row.addStretch(1)
 
         layout = QVBoxLayout(self)
@@ -103,6 +118,17 @@ class Sidebar(QWidget):
 
         self.setFixedWidth(EXPANDED_WIDTH)
         self.main_list.setCurrentRow(0)
+
+    def set_workspace_name(self, name: str) -> None:
+        self._workspace_label.setText(name)
+
+    def select(self, key: str) -> None:
+        """Select the nav item for `key`, exactly as a click would."""
+        for lst, items in ((self.main_list, MAIN_NAV_ITEMS), (self.bottom_list, BOTTOM_NAV_ITEMS)):
+            keys = [item_key for item_key, _, _ in items]
+            if key in keys:
+                lst.setCurrentRow(keys.index(key))
+                return
 
     def _on_selected(self, active_list: QListWidget, other_list: QListWidget, row: int) -> None:
         if row < 0:
@@ -118,5 +144,6 @@ class Sidebar(QWidget):
         for lst, items in ((self.main_list, MAIN_NAV_ITEMS), (self.bottom_list, BOTTOM_NAV_ITEMS)):
             for i, (_, _, label) in enumerate(items):
                 lst.item(i).setText(label if self._expanded else "")
+        self._workspace_label.setVisible(self._expanded)
         self.setFixedWidth(EXPANDED_WIDTH if self._expanded else COLLAPSED_WIDTH)
         self._toggle_button.setToolTip("Collapse sidebar" if self._expanded else "Expand sidebar")

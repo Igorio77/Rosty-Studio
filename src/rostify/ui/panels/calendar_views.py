@@ -200,13 +200,13 @@ class MonthGridView(QWidget):
         self,
         repository: Repository,
         on_change: Callable[[], None] | None = None,
-        accent_hex: str = COLORS["accent"],
+        accent_hex: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._on_change = on_change
-        self._accent_hex = accent_hex
+        self._accent_hex = accent_hex or COLORS["accent"]
         self._anchor = date.today().replace(day=1)
         self._templates: list[Template] = []
         self._assignments: dict[date, str] = {}  # date -> template_id
@@ -371,7 +371,7 @@ class _MiniMonth(QFrame):
     def __init__(self, year: int, month: int, accent_hex: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._first_of_month = date(year, month, 1)
-        self._accent_hex = accent_hex
+        self._accent_hex = accent_hex or COLORS["accent"]
 
         # Frame around the full month, per the reference mock: a bordered
         # rounded card with the month name and a rule stretching beside it.
@@ -465,11 +465,11 @@ class YearGridView(QWidget):
     day_requested = Signal(date)
 
     def __init__(
-        self, repository: Repository, accent_hex: str = COLORS["accent"], parent: QWidget | None = None
+        self, repository: Repository, accent_hex: str | None = None, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
         self._repository = repository
-        self._accent_hex = accent_hex
+        self._accent_hex = accent_hex or COLORS["accent"]
         self._year = date.today().year
 
         prev_button = QPushButton("<")

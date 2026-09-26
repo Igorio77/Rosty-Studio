@@ -1,6 +1,7 @@
 """Templates tab: manage the Templates / Shift ID matrix (one subdepartment
-at a time, cascading off a Department selector) and the Location ID catalog,
-as two sub-tabs.
+at a time, cascading off a Department selector). The Location ID catalog
+widget (`LocationIdsTab`) is also defined here, but it is mounted in
+Settings -> Position codes.
 
 This is master data for scheduling, not the Schedule aggregate itself, so
 this panel talks straight to the Repository (services/persistence.py) —
@@ -644,12 +645,9 @@ class LocationIdsTab(QWidget):
 
 
 class TemplatesPanel(QTabWidget):
-    def __init__(
-        self,
-        repository: Repository,
-        on_location_codes_change: Callable[[], None] | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
+    """Templates & Shift IDs. The Location ID catalog that used to be a
+    second tab here now lives in Settings -> Position codes."""
+
+    def __init__(self, repository: Repository, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.addTab(TemplatesMatrixTab(repository), "Templates && Shift IDs")
-        self.addTab(LocationIdsTab(repository, on_change=on_location_codes_change), "Location IDs")

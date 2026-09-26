@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -109,6 +110,42 @@ def shift_badge_button(code: str, hex_color: str | None, tooltip: str) -> QPushB
             f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']}; background: transparent;"
         )
     return button
+
+
+class SettingsCard(QFrame):
+    """A titled card: heading row (title plus optional controls on the
+    right), an optional hint line, then `body` for the content. The
+    reference's `.settings-section` — surface 2, hairline border, radius 12.
+    """
+
+    def __init__(self, title: str, hint: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("settingsCard")
+
+        title_label = QLabel(title)
+        title_label.setProperty("role", "heading")
+
+        self._header = QHBoxLayout()
+        self._header.setSpacing(12)
+        self._header.addWidget(title_label)
+        self._header.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+        layout.addLayout(self._header)
+        if hint:
+            hint_label = QLabel(hint)
+            hint_label.setWordWrap(True)
+            hint_label.setProperty("role", "hint")
+            layout.addWidget(hint_label)
+
+        self.body = QVBoxLayout()
+        self.body.setSpacing(8)
+        layout.addLayout(self.body)
+
+    def add_header_widget(self, widget: QWidget) -> None:
+        self._header.addWidget(widget)
 
 
 def three_line_row_height(table: QTableWidget) -> int:

@@ -1,14 +1,24 @@
 """First-run seed data.
 
-Position codes: copied from the real production workbook's `Abbreviation`
-sheet (see reference/CASINO_SCHEDULE_MASTER_2026_V3.6.xlsb, docs/01-analysis
-.md §1.1) — this is a generic game/task-type catalog, not personal data, so
-it's safe to ship as-is.
+Everything here fills an empty database so every page has something real
+to show on first launch, for all six subdepartments.
 
-Demo employees: deliberately fictional. The production workbook contains
-real crew names and ids; those must never be copied into this codebase's
-seed/demo data, so this module invents a handful of obviously-fake people
-instead, only for local development and first-run UI testing.
+Where each piece comes from:
+
+* Position codes: copied from the production workbook's `Abbreviation`
+  sheet (reference/CASINO_SCHEDULE_MASTER_2026_V3.6.xlsb, docs/01-analysis
+  .md §1.1). A generic game/task catalog, not personal data.
+* Shift IDs, Templates and their timings: `data/demo_shift_tables.json`,
+  extracted once from the same workbook's per-subdepartment shift tables
+  (`dst`, `sst`, `cst`, `tst`, `hstt`, `mst`). Shift times only. Cells the
+  workbook left as placeholders ("test ok") or that did not parse as clean
+  times were dropped during extraction.
+* Headcount per subdepartment: matches the workbook's `staff data` sheet
+  (Dealers 22, Supervisors 13, Cashiers 4, Technicians 9, Hosts 3,
+  Managers 3).
+* Employees: deliberately fictional. The workbook holds real crew names and
+  ids; those must never be copied into this codebase, so names here are
+  invented and ids start at 900001.
 """
 
 from __future__ import annotations
@@ -19,9 +29,52 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from rostify.core.models import Assignment, Employee, Layer
-from rostify.core.templates import LocationCode, ShiftId, ShiftSegment, ShiftTiming, SubdepartmentOption, Template
+from rostify.core.schedule import Schedule
+from rostify.core.templates import (
+    TEMPLATE_COLORS,
+    LocationCode,
+    ShiftId,
+    ShiftSegment,
+    ShiftTiming,
+    SubdepartmentOption,
+    Template,
+    TemplateAssignment,
+)
 
 _DATA_DIR = Path(__file__).parent / "data"
+
+DEPARTMENT = "Casino"
+
+# (subdepartment, headcount, [positions, first one is the most common])
+_SUBDEPARTMENTS = [
+    ("Dealers", 22, ["Dealer", "Senior Dealer"]),
+    ("Supervisors", 13, ["Pit Supervisor", "Senior Supervisor"]),
+    ("Cashiers", 4, ["Cashier", "Senior Cashier"]),
+    ("Technicians", 9, ["Technician", "Senior Technician"]),
+    ("Hosts", 3, ["Host"]),
+    ("Managers", 3, ["Casino Manager", "Assistant Casino Manager", "Floor Manager"]),
+]
+
+_FIRST_NAMES = [
+    "Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Jamie",
+    "Avery", "Quinn", "Parker", "Rowan", "Skyler", "Reese", "Dakota", "Emerson",
+    "Finley", "Harper", "Kendall", "Logan", "Micah", "Noel", "Oakley", "Peyton",
+]
+_LAST_NAMES = [
+    "Rivera", "Okafor", "Lindqvist", "Nakamura", "Haddad", "Dubois", "Petrov",
+    "Moreau", "Kowalski", "Santos", "Novak", "Eriksen", "Tanaka", "Mensah",
+    "Horvat", "Castillo", "Varga", "Jansen", "Kaplan", "Silva", "Ivanova",
+    "Brennan", "Oliveira", "Fischer",
+]
+
+# Position-layer demo: dealers rotate through these table codes in
+# 30-minute blocks, with a break every fourth block.
+_DEALER_ROTATION = ["B1", "B2", "B3", "BR"]
+_ROTATION_BLOCK_MINUTES = 30
+_ROTATION_HOURS = 3
+
+# How many days of demo schedule to build, starting on this week's Monday.
+_DEMO_DAYS = 14
 
 
 @dataclass(slots=True)
@@ -53,99 +106,207 @@ def seed_location_codes() -> list[LocationCode]:
     return list(seen.values())
 
 
-# (department, [subdepartments]) pairs matching demo_employees() exactly, so
-# first-run List Control dropdowns aren't empty or out of sync with the
-# seeded Staff rows.
-_SEED_DEPARTMENTS = ["Casino"]
-_SEED_SUBDEPARTMENTS = ["Dealers", "Supervisors", "Cashiers", "Technicians", "Hosts", "Managers"]
-_SEED_POSITIONS = ["Dealer", "Pit Supervisor", "Cashier", "Technician", "Host", "Floor Manager"]
-
-
 def seed_lookup_lists() -> tuple[list[str], list[SubdepartmentOption], list[str]]:
-    """First-run seed for the List Control lists (Settings -> List Control)."""
-    subdepartments = [SubdepartmentOption(department="Casino", name=name) for name in _SEED_SUBDEPARTMENTS]
-    return list(_SEED_DEPARTMENTS), subdepartments, list(_SEED_POSITIONS)
+    """First-run seed for the Department / Subdepartment / Position lists."""
+    subdepartments = [SubdepartmentOption(department=DEPARTMENT, name=name) for name, _, _ in _SUBDEPARTMENTS]
+    positions: list[str] = []
+    for _, _, subdepartment_positions in _SUBDEPARTMENTS:
+        positions.extend(p for p in subdepartment_positions if p not in positions)
+    return [DEPARTMENT], subdepartments, positions
+
+
+def _load_shift_tables() -> list[dict]:
+    with (_DATA_DIR / "demo_shift_tables.json").open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _opening_minutes(template_name: str) -> int:
+    """"Open_at_3:30_PM" -> 930. Used to sort templates and to pick the
+    evening ones for the demo calendar."""
+    clock, meridiem = template_name.removeprefix("Open_at_").rsplit("_", 1)
+    hours, minutes = (int(part) for part in clock.split(":"))
+    return (hours % 12 + (12 if meridiem.upper() == "PM" else 0)) * 60 + minutes
 
 
 def seed_templates() -> tuple[list[ShiftId], list[Template], list[ShiftTiming]]:
-    """First-run seed for the Templates tab: a handful of Shift IDs and
-    Templates for Dealers and Supervisors, so the matrix isn't empty on
-    first launch. Timings loosely mirror the reference workbook's shape
-    (a plain shift, a later shift, and one split shift with a long break).
-    """
-    shift_ids = [
-        ShiftId(subdepartment="Dealers", code="1", color="blue"),
-        ShiftId(subdepartment="Dealers", code="2", color="amber"),
-        ShiftId(subdepartment="Dealers", code="3", color="green"),
-        ShiftId(subdepartment="Supervisors", code="SUP1", color="purple"),
-        ShiftId(subdepartment="Supervisors", code="SUP2", color="red"),
-    ]
-    dealer_ids = {s.code: s.id for s in shift_ids if s.subdepartment == "Dealers"}
-    sup_ids = {s.code: s.id for s in shift_ids if s.subdepartment == "Supervisors"}
+    """Shift IDs, Templates and timings for every subdepartment, from the
+    workbook's shift tables."""
+    shift_ids: list[ShiftId] = []
+    templates: list[Template] = []
+    timings: list[ShiftTiming] = []
 
-    day_9to5 = Template(subdepartment="Dealers", name="Day_9to5", color="blue")
-    swing_12to8 = Template(subdepartment="Dealers", name="Swing_12to8", color="amber")
-    split_am_pm = Template(subdepartment="Dealers", name="Split_AM_PM", subtitle="Long break mid-shift", color="purple")
-    day_sup = Template(subdepartment="Supervisors", name="Day_Sup", color="green")
-    night_sup = Template(subdepartment="Supervisors", name="Night_Sup", color="red")
-    templates = [day_9to5, swing_12to8, split_am_pm, day_sup, night_sup]
+    for table in _load_shift_tables():
+        subdepartment = table["subdepartment"]
+        ids_by_code: dict[str, str] = {}
+        for index, code in enumerate(table["shift_codes"]):
+            shift_id = ShiftId(
+                subdepartment=subdepartment, code=code, color=TEMPLATE_COLORS[index % len(TEMPLATE_COLORS)]
+            )
+            shift_ids.append(shift_id)
+            ids_by_code[code] = shift_id.id
 
-    def timing(template_id: str, shift_id: str, *segments: tuple[int, int], comment: str = "") -> ShiftTiming:
-        return ShiftTiming(
-            template_id=template_id,
-            shift_id=shift_id,
-            segments=[ShiftSegment(start_minutes=s, end_minutes=e) for s, e in segments],
-            comment=comment,
-        )
-
-    timings = [
-        timing(day_9to5.id, dealer_ids["1"], (540, 1020)),  # 9:00-17:00
-        timing(day_9to5.id, dealer_ids["2"], (540, 1020)),
-        timing(day_9to5.id, dealer_ids["3"], (600, 1080)),  # 10:00-18:00
-        timing(swing_12to8.id, dealer_ids["1"], (720, 1200)),  # 12:00-20:00
-        timing(swing_12to8.id, dealer_ids["2"], (720, 1200)),
-        timing(swing_12to8.id, dealer_ids["3"], (780, 1260)),  # 13:00-21:00
-        timing(split_am_pm.id, dealer_ids["1"], (540, 780), (1020, 1260), comment="Split - long break"),
-        timing(split_am_pm.id, dealer_ids["3"], (660, 1140)),  # 11:00-19:00
-        timing(day_sup.id, sup_ids["SUP1"], (480, 960)),  # 8:00-16:00
-        timing(day_sup.id, sup_ids["SUP2"], (540, 1020)),  # 9:00-17:00
-        timing(night_sup.id, sup_ids["SUP1"], (960, 1440)),  # 16:00-24:00
-        timing(night_sup.id, sup_ids["SUP2"], (1320, 1800), comment="Overnight coverage"),  # 22:00-06:00
-    ]
+        for index, row in enumerate(sorted(table["templates"], key=lambda t: _opening_minutes(t["name"]))):
+            template = Template(
+                subdepartment=subdepartment,
+                name=row["name"],
+                color=TEMPLATE_COLORS[index % len(TEMPLATE_COLORS)],
+            )
+            templates.append(template)
+            for code, cell in row["timings"].items():
+                timings.append(
+                    ShiftTiming(
+                        template_id=template.id,
+                        shift_id=ids_by_code[code],
+                        segments=[ShiftSegment(start_minutes=s, end_minutes=e) for s, e in cell["segments"]],
+                        comment=cell["comment"],
+                    )
+                )
     return shift_ids, templates, timings
 
 
-def demo_assignments(on: date | None = None) -> list[Assignment]:
-    """A handful of layer-SHIFT and layer-POSITION assignments for the demo
-    roster, dated `on` (defaults to today) — so the Schedule tab isn't empty
-    on first launch either. Deliberately small: just enough to show both
-    layers and a live conflict-free example.
-    """
-    day = on or date.today()
-
-    def at(hour: int, minute: int = 0) -> datetime:
-        return datetime.combine(day, datetime.min.time()) + timedelta(hours=hour, minutes=minute)
-
-    return [
-        Assignment(employee_id="DEMO001", start=at(9), end=at(17), resource="1", layer=Layer.SHIFT, department="Casino"),
-        Assignment(employee_id="DEMO002", start=at(9), end=at(17), resource="2", layer=Layer.SHIFT, department="Casino"),
-        Assignment(employee_id="DEMO003", start=at(8), end=at(16), resource="SUP1", layer=Layer.SHIFT, department="Casino"),
-        Assignment(employee_id="DEMO001", start=at(12), end=at(12, 15), resource="BR", layer=Layer.POSITION, department="Casino"),
-    ]
-
-
 def demo_employees() -> list[Employee]:
-    """A small, obviously-fictional roster for local dev/first-run only."""
-    people = [
-        ("DEMO001", "Alex", "Rivera", "Dealers", "Dealer"),
-        ("DEMO002", "Sam", "Okafor", "Dealers", "Dealer"),
-        ("DEMO003", "Jordan", "Lindqvist", "Supervisors", "Pit Supervisor"),
-        ("DEMO004", "Taylor", "Nakamura", "Cashiers", "Cashier"),
-        ("DEMO005", "Morgan", "Haddad", "Technicians", "Technician"),
-        ("DEMO006", "Casey", "Dubois", "Hosts", "Host"),
-        ("DEMO007", "Riley", "Petrov", "Managers", "Floor Manager"),
-    ]
-    return [
-        Employee(id=id_, first_name=first, last_name=last, subdepartment=subdept, position=pos)
-        for id_, first, last, subdept, pos in people
-    ]
+    """Fictional roster sized like the workbook's `staff data` sheet."""
+    employees: list[Employee] = []
+    number = 0
+    for subdepartment, headcount, positions in _SUBDEPARTMENTS:
+        for index in range(headcount):
+            first = _FIRST_NAMES[number % len(_FIRST_NAMES)]
+            last = _LAST_NAMES[(number * 7) % len(_LAST_NAMES)]
+            # The first person in each group gets the senior title, the
+            # rest the common one — enough variety for filters to matter.
+            position = positions[1] if index == 0 and len(positions) > 1 else positions[0]
+            if subdepartment == "Managers":
+                position = positions[index % len(positions)]
+            employees.append(
+                Employee(
+                    id=str(900001 + number),
+                    first_name=first,
+                    last_name=last,
+                    subdepartment=subdepartment,
+                    department=DEPARTMENT,
+                    position=position,
+                    email=f"{first}.{last}@example.com".lower(),
+                )
+            )
+            number += 1
+    return employees
+
+
+def _week_start(today: date) -> date:
+    return today - timedelta(days=today.weekday())
+
+
+def demo_schedule(
+    employees: list[Employee],
+    shift_ids: list[ShiftId],
+    templates: list[Template],
+    timings: list[ShiftTiming],
+    today: date | None = None,
+) -> tuple[list[TemplateAssignment], list[Assignment]]:
+    """Two weeks of plan for every subdepartment, starting this Monday.
+
+    Each day gets one of the subdepartment's evening templates (the casino
+    opens in the evening on most days), rotated day to day. Each employee
+    keeps roughly the same shift slot all fortnight, so rest between shifts
+    stays realistic, and takes one fixed day off per week. Today also gets
+    a position rotation for the dealers, so the Day view is not empty.
+    """
+    today = today or date.today()
+    first_day = _week_start(today)
+    code_by_id = {s.id: s.code for s in shift_ids}
+
+    template_assignments: list[TemplateAssignment] = []
+    assignments: list[Assignment] = []
+
+    for subdepartment, _, _ in _SUBDEPARTMENTS:
+        people = [e for e in employees if e.subdepartment == subdepartment]
+        own_templates = sorted(
+            (t for t in templates if t.subdepartment == subdepartment), key=lambda t: _opening_minutes(t.name)
+        )
+        evening = [t for t in own_templates if _opening_minutes(t.name) >= 15 * 60] or own_templates
+        if not evening:
+            continue
+
+        for day_index in range(_DEMO_DAYS):
+            day = first_day + timedelta(days=day_index)
+            template = evening[day_index % len(evening)]
+            template_assignments.append(TemplateAssignment(subdepartment=subdepartment, date=day, template_id=template.id))
+
+            day_timings = [t for t in timings if t.template_id == template.id and t.segments]
+            day_timings.sort(key=lambda t: min(s.start_minutes for s in t.segments))
+            if not day_timings:
+                continue
+
+            day_start = datetime.combine(day, datetime.min.time())
+            for person_index, person in enumerate(people):
+                if person_index % 7 == day_index % 7:
+                    continue  # this person's weekly day off
+                if person_index >= len(day_timings):
+                    continue  # more people than slots on this template
+                timing = day_timings[person_index]
+                start = min(s.start_minutes for s in timing.segments)
+                end = max(s.end_minutes for s in timing.segments)
+                assignments.append(
+                    Assignment(
+                        employee_id=person.id,
+                        start=day_start + timedelta(minutes=start),
+                        end=day_start + timedelta(minutes=end),
+                        resource=code_by_id[timing.shift_id],
+                        layer=Layer.SHIFT,
+                        department=person.department,
+                    )
+                )
+                if subdepartment == "Dealers" and day == today:
+                    assignments.extend(_dealer_rotation(person, day_start + timedelta(minutes=start), person_index))
+
+    return template_assignments, assignments
+
+
+def _dealer_rotation(person: Employee, shift_start: datetime, offset: int) -> list[Assignment]:
+    """The first few hours of one dealer's shift as position-layer blocks.
+    `offset` staggers dealers so they are not all on the same table."""
+    blocks = []
+    for block in range(_ROTATION_HOURS * 60 // _ROTATION_BLOCK_MINUTES):
+        start = shift_start + timedelta(minutes=block * _ROTATION_BLOCK_MINUTES)
+        blocks.append(
+            Assignment(
+                employee_id=person.id,
+                start=start,
+                end=start + timedelta(minutes=_ROTATION_BLOCK_MINUTES),
+                resource=_DEALER_ROTATION[(block + offset) % len(_DEALER_ROTATION)],
+                layer=Layer.POSITION,
+                department=person.department,
+            )
+        )
+    return blocks
+
+
+def seed_first_run(repository, schedule: Schedule, today: date | None = None) -> None:
+    """Fill an empty database with the full demo workspace. `repository` is
+    a `services.persistence.Repository` (not type-hinted here only to keep
+    this module importable without it)."""
+    departments, subdepartments, positions = seed_lookup_lists()
+    for department in departments:
+        repository.save_department(department)
+    for subdepartment in subdepartments:
+        repository.save_subdepartment(subdepartment)
+    for position in positions:
+        repository.save_position(position)
+
+    shift_ids, templates, timings = seed_templates()
+    for shift_id in shift_ids:
+        repository.save_shift_id(shift_id)
+    for template in templates:
+        repository.save_template(template)
+    for timing in timings:
+        repository.save_shift_timing(timing)
+
+    employees = demo_employees()
+    template_assignments, assignments = demo_schedule(employees, shift_ids, templates, timings, today)
+    for employee in employees:
+        schedule.add_employee(employee)
+    for assignment in assignments:
+        schedule.add_assignment(assignment)
+    repository.save_schedule(schedule)
+    for template_assignment in template_assignments:
+        repository.save_template_assignment(template_assignment)
