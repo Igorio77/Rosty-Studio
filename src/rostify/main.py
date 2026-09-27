@@ -55,43 +55,22 @@ def main() -> int:
     app_settings = load_app_settings(app_settings_path)
 
     app = QApplication(sys.argv)
-    windows: list[MainWindow] = []
+    apply_theme(app_settings.theme_mode, app_settings.accent)
+    app.setStyleSheet(stylesheet())
 
-    def open_window() -> None:
-        """Apply the saved theme and show a fresh main window. On a theme
-        switch the old window hands over its size and current page, then
-        closes — most widgets bake colors in when they are built, so a
-        rebuild is the one reliable way to repaint everything."""
-        apply_theme(app_settings.theme_mode, app_settings.accent)
-        app.setStyleSheet(stylesheet())
-
-        window = MainWindow(
-            schedule,
-            rule_engine,
-            location_codes,
-            repository,
-            rules_config_path,
-            app_settings=app_settings,
-            app_settings_path=app_settings_path,
-            on_appearance_change=open_window,
-        )
-        if windows:
-            old = windows.pop()
-            window.setGeometry(old.geometry())
-            if old.isMaximized():
-                window.showMaximized()
-            window.show_page(old.current_page())
-            window.settings_panel.select_category(old.settings_panel.current_category())
-            window.show()
-            old.close()
-            old.deleteLater()
-        else:
-            window.show()
-        windows.append(window)
-
-    open_window()
+    # A theme switch later on is handled inside the window itself
+    # (MainWindow._rebuild_for_theme), so it never closes and reopens.
+    window = MainWindow(
+        schedule,
+        rule_engine,
+        location_codes,
+        repository,
+        rules_config_path,
+        app_settings=app_settings,
+        app_settings_path=app_settings_path,
+    )
+    window.show()
     return app.exec()
-
 
 if __name__ == "__main__":
     sys.exit(main())

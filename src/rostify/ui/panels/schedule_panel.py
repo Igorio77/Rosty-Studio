@@ -237,7 +237,7 @@ class SchedulePanel(QWidget):
 
     def _add_assignment(self) -> None:
         if not self._schedule.employees():
-            QMessageBox.information(self, "No employees", "Add an employee first (Staff tab).")
+            QMessageBox.information(self, "No employees", "Add an employee first (Team page).")
             return
 
         dialog = AddAssignmentDialog(self._schedule, self._location_codes, self)

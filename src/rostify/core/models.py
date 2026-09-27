@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -56,11 +56,27 @@ class Employee:
     position: str = ""
     email: str = ""
     password_hash: str = ""
+    # False = archived: kept on file but out of every schedule and rotation
+    # (Team -> Archive tab).
     active: bool = True
+    # "Temporarily not available" period, both days inclusive. The employee
+    # still shows everywhere, greyed out, on those days.
+    unavailable_from: date | None = None
+    unavailable_to: date | None = None
 
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
+
+    @property
+    def archived(self) -> bool:
+        return not self.active
+
+    def is_unavailable_on(self, day: date) -> bool:
+        if self.unavailable_from is None:
+            return False
+        end = self.unavailable_to or self.unavailable_from
+        return self.unavailable_from <= day <= end
 
 
 @dataclass(slots=True)
@@ -81,6 +97,11 @@ class Assignment:
     layer: Layer
     department: str = ""
     comment: str = ""
+    # Layer SHIFT only: whose schedule this shift is on — the subdepartment
+    # whose Shift IDs and Template timings it uses. Empty means the
+    # employee's own subdepartment; set when e.g. a supervisor is put on
+    # the dealers' schedule for a day.
+    subdepartment: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def overlaps(self, other: "Assignment") -> bool:
@@ -89,3 +110,20 @@ class Assignment:
 
     def same_day(self, other: "Assignment") -> bool:
         return self.start.date() == other.start.date()
+
+
+@dataclass(slots=True)
+class Transfer:
+    """An employee working in another subdepartment for a period — e.g. a
+    supervisor put on the dealers' schedule for a week. On those days
+    (both inclusive) they belong to `subdepartment`, not their own; their
+    home subdepartment does not change."""
+
+    employee_id: str
+    subdepartment: str
+    start: date
+    end: date
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def covers(self, day: date) -> bool:
+        return self.start <= day <= self.end

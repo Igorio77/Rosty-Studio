@@ -1,7 +1,6 @@
 """Templates tab: manage the Templates / Shift ID matrix (one subdepartment
-at a time, cascading off a Department selector). The Location ID catalog
-widget (`LocationIdsTab`) is also defined here, but it is mounted in
-Settings -> Position codes.
+at a time, cascading off a Department selector). The Location code catalog
+lives in Settings -> Lists (`list_control_panel.py`).
 
 This is master data for scheduling, not the Schedule aggregate itself, so
 this panel talks straight to the Repository (services/persistence.py) —
@@ -18,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QTime, Qt
+from PySide6.QtCore import QTime, QTimer, Qt
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -39,11 +38,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rostify.core.templates import TEMPLATE_COLORS, LocationCode, ShiftId, ShiftSegment, ShiftTiming, Template
+from rostify.core.schedule import Schedule
+from rostify.core.templates import TEMPLATE_COLORS, ShiftId, ShiftSegment, ShiftTiming, Template, natural_key
 from rostify.services.persistence import Repository
+from rostify.services.shift_sync import rename_shift_code, retime_template
 
 from ..theme import TEMPLATE_COLOR_HEX
-from .widgets import IconTableEditor, SimpleFormDialog, chars_width, color_dot_icon, icon_button, three_line_row_height
+from .widgets import (
+    FrozenColumns,
+    SimpleFormDialog,
+    ZoomControl,
+    apply_table_zoom,
+    chars_width,
+    color_dot_icon,
+    icon_button,
+    three_line_row_height,
+)
 
 
 def _color_dot_icon(color_name: str):
@@ -183,23 +193,43 @@ class TemplatesMatrixTab(QWidget):
     anywhere offers the same actions as a context menu.
     """
 
-    def __init__(self, repository: Repository, parent: QWidget | None = None) -> None:
+    _TEMPLATE_SORTS = ["A–Z", "Z–A"]
+    _SHIFT_SORTS = ["A–Z", "Z–A", "Start time"]
+
+    def __init__(
+        self,
+        repository: Repository,
+        schedule: Schedule | None = None,
+        on_change: Callable[[], None] | None = None,
+        parent: QWidget | None = None,
+        department: str = "",
+        zoom: float = 1.0,
+        on_zoom_changed: Callable[[float], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._repository = repository
+        self._department = department  # chosen in Settings -> General
+        self._on_zoom_changed = on_zoom_changed
+        # Shifts already assigned copy their times from a template, so a
+        # timing edit here re-times them (services/shift_sync.py).
+        self._schedule = schedule
+        self._on_change = on_change
         self._shift_ids: list[ShiftId] = []
         self._templates: list[Template] = []
         self._timings: dict[tuple[str, str], ShiftTiming] = {}
         self._selected_template_row: int | None = None
         self._selected_shift_id_col: int | None = None
+        # Column widths the user dragged, keyed by shift ID (and
+        # "__template__" for the name column), so a re-render after an edit
+        # doesn't snap them back to the default.
+        self._column_widths: dict[str, int] = {}
+        self._column_keys: list[str] = []
 
-        self.department_combo = QComboBox()
-        self.department_combo.currentTextChanged.connect(self._reload_subdepartments)
         self.subdepartment_combo = QComboBox()
+        self.subdepartment_combo.setToolTip("Templates and Shift IDs belong to one subdepartment")
         self.subdepartment_combo.currentTextChanged.connect(self._on_subdepartment_changed)
 
         top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Department"))
-        top_row.addWidget(self.department_combo)
         top_row.addWidget(QLabel("Subdepartment"))
         top_row.addWidget(self.subdepartment_combo)
         top_row.addStretch(1)
@@ -232,6 +262,25 @@ class TemplatesMatrixTab(QWidget):
         button_row.addWidget(delete_shift_id_button)
         button_row.addStretch(1)
 
+        # Sort order for the matrix. A–Z is "natural": 2 before 10.
+        self.template_sort_combo = QComboBox()
+        self.template_sort_combo.addItems(self._TEMPLATE_SORTS)
+        self.template_sort_combo.setObjectName("compactCombo")
+        self.template_sort_combo.setToolTip("Order of the template rows")
+        self.shift_sort_combo = QComboBox()
+        self.shift_sort_combo.addItems(self._SHIFT_SORTS)
+        self.shift_sort_combo.setObjectName("compactCombo")
+        self.shift_sort_combo.setToolTip("Order of the Shift ID columns")
+        self.template_sort_combo.currentTextChanged.connect(lambda _: self._sort_and_render())
+        self.shift_sort_combo.currentTextChanged.connect(lambda _: self._sort_and_render())
+        button_row.addWidget(QLabel("Sort templates"))
+        button_row.addWidget(self.template_sort_combo)
+        button_row.addSpacing(12)
+        button_row.addWidget(QLabel("Sort shift IDs"))
+        button_row.addWidget(self.shift_sort_combo)
+        self._zoom_initial = zoom
+        self._button_row = button_row
+
         self.matrix_table = QTableWidget()
         self.matrix_table.setWordWrap(True)
         self.matrix_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -247,6 +296,7 @@ class TemplatesMatrixTab(QWidget):
         self.matrix_table.cellDoubleClicked.connect(self._edit_cell)
         self.matrix_table.verticalHeader().sectionClicked.connect(self._on_row_header_clicked)
         self.matrix_table.horizontalHeader().sectionClicked.connect(self._on_column_header_clicked)
+        self.matrix_table.horizontalHeader().sectionDoubleClicked.connect(self._on_column_header_double_clicked)
         # Right-click is a second way to add/edit/delete, alongside the icon
         # rows above.
         self.matrix_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -255,34 +305,55 @@ class TemplatesMatrixTab(QWidget):
         self.matrix_table.horizontalHeader().customContextMenuRequested.connect(
             self._show_shift_id_header_context_menu
         )
+        # The Template column stays put while the Shift ID columns scroll.
+        self._frozen = FrozenColumns(self.matrix_table, 1)
+        self._frozen.view.doubleClicked.connect(lambda index: self._edit_cell(index.row(), index.column()))
+        self._frozen.view.clicked.connect(lambda index: self._on_cell_clicked(index.row(), index.column()))
+        self._frozen.view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._frozen.view.customContextMenuRequested.connect(self._show_frozen_context_menu)
+
+        self._zoom = 0.0
+        self.zoom_control = ZoomControl(self.matrix_table, self._zoom_initial)
+        self.zoom_control.zoom_changed.connect(self._on_zoom)
+        button_row.addSpacing(12)
+        button_row.addWidget(self.zoom_control)
+        self._apply_zoom(self.zoom_control.zoom())
 
         layout = QVBoxLayout(self)
         layout.addLayout(top_row)
         layout.addLayout(button_row)
         layout.addWidget(self.matrix_table, stretch=1)
-
-        self.reload_departments()
+        # Filled in showEvent, not here: nothing is read until the page is
+        # actually opened.
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
-        self.reload_departments()
+        self._reload_subdepartments()
 
-    # --- department / subdepartment cascade -------------------------------
+    def _apply_zoom(self, zoom: float) -> None:
+        apply_table_zoom(self.matrix_table, zoom, self._zoom)
+        self._zoom = zoom
+        self.matrix_table.verticalHeader().setDefaultSectionSize(three_line_row_height(self.matrix_table))
 
-    def reload_departments(self) -> None:
-        current = self.department_combo.currentText()
-        departments = self._repository.load_departments()
-        self.department_combo.blockSignals(True)
-        self.department_combo.clear()
-        self.department_combo.addItems(departments)
-        index = self.department_combo.findText(current)
-        self.department_combo.setCurrentIndex(index if index >= 0 else 0)
-        self.department_combo.blockSignals(False)
-        self._reload_subdepartments(self.department_combo.currentText())
+    def _on_zoom(self, zoom: float) -> None:
+        self._apply_zoom(zoom)
+        for row in range(self.matrix_table.rowCount()):
+            self.matrix_table.setRowHeight(row, three_line_row_height(self.matrix_table))
+        if self._on_zoom_changed:
+            self._on_zoom_changed(zoom)
 
-    def _reload_subdepartments(self, department: str) -> None:
+    def select_subdepartment(self, name: str) -> None:
+        """Show this subdepartment (Month view's "Open in Templates")."""
+        self._reload_subdepartments()
+        index = self.subdepartment_combo.findText(name)
+        if index >= 0:
+            self.subdepartment_combo.setCurrentIndex(index)
+
+    # --- subdepartments ----------------------------------------------------
+
+    def _reload_subdepartments(self) -> None:
         current = self.subdepartment_combo.currentText()
-        options = self._repository.load_subdepartments(department) if department else []
+        options = self._repository.load_subdepartments(self._department or None)
         self.subdepartment_combo.blockSignals(True)
         self.subdepartment_combo.clear()
         self.subdepartment_combo.addItems([o.name for o in options])
@@ -312,6 +383,27 @@ class TemplatesMatrixTab(QWidget):
         for template in self._templates:
             for timing in self._repository.load_shift_timings(template.id):
                 self._timings[(timing.template_id, timing.shift_id)] = timing
+        self._sort_and_render()
+
+    def _sort_and_render(self) -> None:
+        """Order templates and shift IDs as the two Sort combos say. Row and
+        column selections refer to positions, so they are cleared."""
+        self._selected_template_row = None
+        self._selected_shift_id_col = None
+        reverse = self.template_sort_combo.currentText() == "Z–A"
+        self._templates.sort(key=lambda t: natural_key(t.name), reverse=reverse)
+        shift_sort = self.shift_sort_combo.currentText()
+        if shift_sort == "Start time":
+            def earliest(shift_id: ShiftId):
+                starts = [
+                    min(seg.start_minutes for seg in timing.segments)
+                    for (_, sid), timing in self._timings.items()
+                    if sid == shift_id.id and timing.segments
+                ]
+                return (min(starts) if starts else 10**6, natural_key(shift_id.code))
+            self._shift_ids.sort(key=earliest)
+        else:
+            self._shift_ids.sort(key=lambda sid: natural_key(sid.code), reverse=shift_sort == "Z–A")
         self._render_matrix()
 
     def _render_matrix(self) -> None:
@@ -320,6 +412,7 @@ class TemplatesMatrixTab(QWidget):
         # user drag row *height*, not header *width*, so a real column is
         # what actually makes "Split_AM_PM" draggable wider.
         table = self.matrix_table
+        self._remember_column_widths()
         table.setRowCount(len(self._templates))
         table.setColumnCount(len(self._shift_ids) + 1)
         table.setHorizontalHeaderItem(0, QTableWidgetItem("Template"))
@@ -346,10 +439,20 @@ class TemplatesMatrixTab(QWidget):
                 item.setToolTip(_cell_tooltip(timing))
                 table.setItem(row, col, item)
 
+        # Every column gets the width the user last gave it; only a column
+        # never seen before starts at the default.
         default_width = chars_width(table, 20)
-        for col in range(table.columnCount()):
-            if table.columnWidth(col) < default_width:
-                table.horizontalHeader().resizeSection(col, default_width)
+        keys = ["__template__"] + [s.id for s in self._shift_ids]
+        for col, key in enumerate(keys):
+            table.horizontalHeader().resizeSection(col, self._column_widths.get(key, default_width))
+        self._column_keys = keys
+        self._frozen.sync()
+
+    def _remember_column_widths(self) -> None:
+        header = self.matrix_table.horizontalHeader()
+        for col, key in enumerate(self._column_keys):
+            if col < header.count():
+                self._column_widths[key] = header.sectionSize(col)
 
     def _on_row_header_clicked(self, row: int) -> None:
         self._selected_template_row = row
@@ -358,6 +461,14 @@ class TemplatesMatrixTab(QWidget):
         if col == 0:
             return  # the "Template" header, not a shift ID
         self._selected_shift_id_col = col - 1
+
+    def _on_column_header_double_clicked(self, col: int) -> None:
+        """Double-click a shift ID's header to edit it — same gesture as
+        double-clicking a template's name."""
+        if col == 0:
+            return  # the "Template" header, not a shift ID
+        self._selected_shift_id_col = col - 1
+        self._edit_shift_id()
 
     def _on_cell_clicked(self, row: int, col: int) -> None:
         """Single click: select only — same as the Team tab. `SelectRows`
@@ -395,7 +506,16 @@ class TemplatesMatrixTab(QWidget):
             self._repository.save_shift_timing(timing)
             self._timings[(template.id, shift_id.id)] = timing
 
+        self._retime(template.id)
         self._render_matrix()
+
+    def _retime(self, template_id: str) -> None:
+        """Shifts already assigned on days that use this template pick up
+        the new timing."""
+        if self._schedule is None:
+            return
+        if retime_template(self._schedule, self._repository, template_id) and self._on_change:
+            self._on_change()
 
     def _show_matrix_context_menu(self, position) -> None:
         index = self.matrix_table.indexAt(position)
@@ -421,6 +541,30 @@ class TemplatesMatrixTab(QWidget):
             chosen = menu.exec(self.matrix_table.viewport().mapToGlobal(position))
             if chosen is add_action:
                 self._add_template()
+
+    def _show_frozen_context_menu(self, position) -> None:
+        index = self._frozen.view.indexAt(position)
+        if not index.isValid():
+            return
+        self._selected_template_row = index.row()
+        menu = QMenu(self._frozen.view)
+        edit_action = menu.addAction("Edit template")
+        delete_action = menu.addAction("Delete template")
+        chosen = menu.exec(self._frozen.view.viewport().mapToGlobal(position))
+        if chosen is edit_action:
+            self._edit_template()
+        elif chosen is delete_action:
+            self._delete_template()
+
+    def open_timing(self, template_id: str, code: str) -> None:
+        """Select the (template, Shift ID) cell and open its timing editor."""
+        row = next((i for i, t in enumerate(self._templates) if t.id == template_id), None)
+        col = next((i + 1 for i, s in enumerate(self._shift_ids) if s.code == code), None)
+        if row is None or col is None:
+            return
+        self.matrix_table.setCurrentCell(row, col)
+        self.matrix_table.scrollTo(self.matrix_table.model().index(row, col))
+        QTimer.singleShot(0, lambda: self._edit_cell(row, col))
 
     def _show_shift_id_header_context_menu(self, position) -> None:
         header = self.matrix_table.horizontalHeader()
@@ -535,6 +679,11 @@ class TemplatesMatrixTab(QWidget):
         self._repository.save_shift_id(
             ShiftId(id=shift_id.id, subdepartment=shift_id.subdepartment, code=code, color=color or "blue")
         )
+        if code != shift_id.code and self._schedule is not None:
+            # Shifts already assigned under the old code move to the new one.
+            if rename_shift_code(self._schedule, self._repository, shift_id.subdepartment, shift_id.code, code):
+                if self._on_change:
+                    self._on_change()
         self._reload_for_subdepartment(self._current_subdepartment())
 
     def _delete_shift_id(self) -> None:
@@ -555,99 +704,34 @@ class TemplatesMatrixTab(QWidget):
         return reply == QMessageBox.Yes
 
 
-class LocationIdsTab(QWidget):
-    """The Location ID catalog as its own sub-tab: Abbreviation (the short
-    code a future Day-view grid cell will pick), Location Code (the fuller
-    code), Location Description and Location Group — four distinct fields,
-    not one field under two names.
-    """
-
-    _FIELDS = [("Abbreviation", None), ("Location Code", None), ("Description", None), ("Group", None)]
+class TemplatesPanel(QTabWidget):
+    """Templates & Shift IDs. The Location code catalog that used to be a
+    second tab here now lives in Settings -> Lists."""
 
     def __init__(
         self,
         repository: Repository,
+        schedule: Schedule | None = None,
         on_change: Callable[[], None] | None = None,
         parent: QWidget | None = None,
+        department: str = "",
+        zoom: float = 1.0,
+        on_zoom_changed: Callable[[float], None] | None = None,
     ) -> None:
         super().__init__(parent)
-        self._repository = repository
-        self._on_change = on_change
-        self._location_codes: list[LocationCode] = []
-
-        self.editor = IconTableEditor(
-            ["Abbreviation", "Location Code", "Location Description", "Location Group"],
-            self._add,
-            self._edit,
-            self._delete,
+        self.matrix = TemplatesMatrixTab(
+            repository, schedule, on_change, department=department, zoom=zoom, on_zoom_changed=on_zoom_changed
         )
+        self.addTab(self.matrix, "Templates && Shift IDs")
+        self.setTabToolTip(0, "Day plans (templates) and the shift timings inside each")
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.editor)
+    def select_subdepartment(self, name: str) -> None:
+        self.matrix.select_subdepartment(name)
 
-        self.reload()
-
-    def reload(self) -> None:
-        self._location_codes = self._repository.load_location_codes()
-        self.editor.set_rows(
-            [(lc.abbreviation, lc.location_code, lc.description, lc.group) for lc in self._location_codes]
-        )
-
-    def _add(self) -> None:
-        dialog = SimpleFormDialog("Add location ID", self._FIELDS, parent=self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-        abbreviation, location_code, description, group = dialog.values()
-        if not abbreviation:
-            return
-        if any(lc.abbreviation == abbreviation for lc in self._location_codes):
-            QMessageBox.warning(self, "Duplicate abbreviation", f"'{abbreviation}' already exists.")
-            return
-        self._repository.save_location_code(
-            LocationCode(abbreviation=abbreviation, location_code=location_code, description=description, group=group)
-        )
-        self._reload_and_notify()
-
-    def _edit(self, row: int) -> None:
-        existing = self._location_codes[row]
-        dialog = SimpleFormDialog(
-            "Edit location ID",
-            self._FIELDS,
-            initial=[existing.abbreviation, existing.location_code, existing.description, existing.group],
-            parent=self,
-        )
-        if dialog.exec() != QDialog.Accepted:
-            return
-        abbreviation, location_code, description, group = dialog.values()
-        if not abbreviation:
-            return
-        if abbreviation != existing.abbreviation:
-            self._repository.delete_location_code(existing.abbreviation)
-        self._repository.save_location_code(
-            LocationCode(abbreviation=abbreviation, location_code=location_code, description=description, group=group)
-        )
-        self._reload_and_notify()
-
-    def _delete(self, row: int) -> None:
-        existing = self._location_codes[row]
-        reply = QMessageBox.question(
-            self, "Delete location ID", f"Delete '{existing.abbreviation}'?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
-            return
-        self._repository.delete_location_code(existing.abbreviation)
-        self._reload_and_notify()
-
-    def _reload_and_notify(self) -> None:
-        self.reload()
-        if self._on_change:
-            self._on_change()
-
-
-class TemplatesPanel(QTabWidget):
-    """Templates & Shift IDs. The Location ID catalog that used to be a
-    second tab here now lives in Settings -> Position codes."""
-
-    def __init__(self, repository: Repository, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.addTab(TemplatesMatrixTab(repository), "Templates && Shift IDs")
+    def open_timing(self, group: str, code: str, day) -> None:
+        """Show `group`'s matrix and open the timing of `code` in the
+        template used on `day`."""
+        self.matrix.select_subdepartment(group)
+        assignment = self.matrix._repository.load_template_assignment(group, day)
+        if assignment is not None:
+            self.matrix.open_timing(assignment.template_id, code)

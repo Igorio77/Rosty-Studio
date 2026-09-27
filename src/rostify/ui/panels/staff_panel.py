@@ -1,14 +1,24 @@
-"""Staff tab: a table of employees backed by the Schedule aggregate, plus
+"""Team tab: a table of employees backed by the Schedule aggregate, plus
 add/edit/delete. Department/Subdepartment/Position are dropdown-only,
-sourced from the admin-managed lists in Settings -> List Control
+sourced from the admin-managed lists in Settings -> Lists
 (list_control_panel.py) — no free text for those three fields anymore.
+
+Two tabs: Crew and Archive. Archiving someone (not on board, left the
+company) takes them out of every schedule and rotation but keeps their
+record; Restore brings them back. Separately, an employee can be marked
+"temporarily not available" for a date range: they stay everywhere, greyed
+out on those days.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from datetime import date, timedelta
+
+from PySide6.QtCore import QAbstractTableModel, QDate, QModelIndex, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDateEdit,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,6 +28,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPushButton,
+    QTabBar,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -28,12 +40,36 @@ from rostify.core.schedule import Schedule
 from rostify.services.auth import hash_password
 from rostify.services.persistence import Repository
 
-from .widgets import icon_button
+from ..theme import COLORS
+from .widgets import ZoomControl, apply_table_zoom, icon_button
 
 SEQUENCE_COLUMN = "_seq"  # not a real Employee field — a computed 1-based row number
 COLUMNS = [SEQUENCE_COLUMN, "first_name", "last_name", "id", "department", "subdepartment", "position", "email", "password_hash", "active"]
-HEADERS = ["#", "First name", "Last Name", "DI #", "Department", "Subdepartment", "Position", "Email", "Password", "Status"]
-COLUMN_WIDTHS = [40, 120, 120, 100, 100, 120, 120, 160, 100, 80]
+HEADERS = ["#", "First Name", "Last Name", "Employee ID", "Department", "Subdepartment", "Position", "Email", "Password", "Status"]
+COLUMN_WIDTHS = [40, 120, 120, 100, 100, 120, 120, 160, 100, 190]
+
+
+def _short(day: date) -> str:
+    return f"{day.day} {day.strftime('%b')}"
+
+
+def availability_text(employee: Employee) -> str:
+    if employee.archived:
+        return "Archived"
+    if employee.unavailable_from is None:
+        return "Available"
+    end = employee.unavailable_to or employee.unavailable_from
+    if end < date.today():
+        return "Available"
+    return f"Not available {_short(employee.unavailable_from)} – {_short(end)}"
+
+
+def _to_qdate(day: date) -> QDate:
+    return QDate(day.year, day.month, day.day)
+
+
+def _from_qdate(qd: QDate) -> date:
+    return date(qd.year(), qd.month(), qd.day())
 
 
 class EmployeeTableModel(QAbstractTableModel):
@@ -65,15 +101,20 @@ class EmployeeTableModel(QAbstractTableModel):
         return None
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
-        if not index.isValid() or role != Qt.DisplayRole:
+        if not index.isValid():
+            return None
+        employee = self._rows[index.row()]
+        if role == Qt.ForegroundRole:
+            # Greyed out while temporarily not available.
+            return QColor(COLORS["text_tertiary"]) if employee.is_unavailable_on(date.today()) else None
+        if role != Qt.DisplayRole:
             return None
         field = COLUMNS[index.column()]
         if field == SEQUENCE_COLUMN:
             return str(index.row() + 1)
-        employee = self._rows[index.row()]
         value = getattr(employee, field)
         if field == "active":
-            return "Yes" if value else "No"
+            return availability_text(employee)
         if field == "password_hash":
             return "Set" if value else "—"
         return value
@@ -133,12 +174,20 @@ class EmployeeDialog(QDialog):
                 self.subdepartment_combo.setCurrentIndex(index)
         self.department_combo.currentTextChanged.connect(self._reload_subdepartments)
 
+        # Positions belong to a department, so this list follows the
+        # Department combo the same way Subdepartment does.
         self.position_combo = QComboBox()
-        self.position_combo.addItems(repository.load_positions())
+        self._reload_positions(self.department_combo.currentText())
         if existing:
             index = self.position_combo.findText(existing.position)
             if index >= 0:
                 self.position_combo.setCurrentIndex(index)
+            elif existing.position:
+                # Kept visible even if it's no longer in the list, so saving
+                # the form doesn't silently change it.
+                self.position_combo.addItem(existing.position)
+                self.position_combo.setCurrentText(existing.position)
+        self.department_combo.currentTextChanged.connect(self._reload_positions)
 
         self.email_edit = QLineEdit(existing.email if existing else "")
 
@@ -148,21 +197,38 @@ class EmployeeDialog(QDialog):
             "Leave blank to keep unchanged" if existing else "Leave blank for no password"
         )
 
-        self.status_combo = QComboBox()
-        self.status_combo.addItems(["Active", "Inactive"])
-        if existing is not None:
-            self.status_combo.setCurrentText("Active" if existing.active else "Inactive")
+        # "Temporarily not available", with a date range. Archiving is not
+        # here: it has its own button on the Team tab.
+        self.unavailable_check = QCheckBox("Temporarily not available")
+        start = existing.unavailable_from if existing and existing.unavailable_from else date.today()
+        end = existing.unavailable_to if existing and existing.unavailable_to else start + timedelta(days=6)
+        self.unavailable_from_edit = QDateEdit(_to_qdate(start))
+        self.unavailable_from_edit.setCalendarPopup(True)
+        self.unavailable_to_edit = QDateEdit(_to_qdate(end))
+        self.unavailable_to_edit.setCalendarPopup(True)
+        self.unavailable_check.toggled.connect(self.unavailable_from_edit.setEnabled)
+        self.unavailable_check.toggled.connect(self.unavailable_to_edit.setEnabled)
+        self.unavailable_check.setChecked(bool(existing and existing.unavailable_from))
+        self.unavailable_from_edit.setEnabled(self.unavailable_check.isChecked())
+        self.unavailable_to_edit.setEnabled(self.unavailable_check.isChecked())
+        period_row = QHBoxLayout()
+        period_row.addWidget(QLabel("From"))
+        period_row.addWidget(self.unavailable_from_edit)
+        period_row.addWidget(QLabel("To"))
+        period_row.addWidget(self.unavailable_to_edit)
+        period_row.addStretch(1)
 
         form = QFormLayout()
-        form.addRow("Employee id", self.id_edit)
-        form.addRow("First name", self.first_name_edit)
-        form.addRow("Last name", self.last_name_edit)
+        form.addRow("Employee ID", self.id_edit)
+        form.addRow("First Name", self.first_name_edit)
+        form.addRow("Last Name", self.last_name_edit)
         form.addRow("Department", self.department_combo)
         form.addRow("Subdepartment", self.subdepartment_combo)
         form.addRow("Position", self.position_combo)
         form.addRow("Email", self.email_edit)
         form.addRow("Password", self.password_edit)
-        form.addRow("Status", self.status_combo)
+        form.addRow("", self.unavailable_check)
+        form.addRow("", period_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -177,6 +243,11 @@ class EmployeeDialog(QDialog):
         if department:
             options = self._repository.load_subdepartments(department)
             self.subdepartment_combo.addItems([o.name for o in options])
+
+    def _reload_positions(self, department: str) -> None:
+        self.position_combo.clear()
+        if department:
+            self.position_combo.addItems([p.name for p in self._repository.load_positions(department)])
 
     def employee(self) -> Employee:
         password_text = self.password_edit.text()
@@ -196,37 +267,58 @@ class EmployeeDialog(QDialog):
             position=self.position_combo.currentText(),
             email=self.email_edit.text().strip(),
             password_hash=password_hash,
-            active=self.status_combo.currentText() == "Active",
+            active=self._existing.active if self._existing is not None else True,
+            unavailable_from=self._period()[0],
+            unavailable_to=self._period()[1],
         )
+
+    def _period(self) -> tuple[date | None, date | None]:
+        if not self.unavailable_check.isChecked():
+            return None, None
+        start = _from_qdate(self.unavailable_from_edit.date())
+        end = _from_qdate(self.unavailable_to_edit.date())
+        return (start, end) if start <= end else (end, start)
 
 
 class StaffPanel(QWidget):
     def __init__(
-        self, schedule: Schedule, repository: Repository, on_change=None, parent: QWidget | None = None
+        self,
+        schedule: Schedule,
+        repository: Repository,
+        on_change=None,
+        parent: QWidget | None = None,
+        department: str = "",
+        zoom: float = 1.0,
+        on_zoom_changed=None,
     ) -> None:
         super().__init__(parent)
+        self._on_zoom_changed = on_zoom_changed
         self._schedule = schedule
         self._repository = repository
         self._on_change = on_change
+        self._department = department  # chosen in Settings -> General
 
-        self.department_combo = QComboBox()
         self.subdepartment_combo = QComboBox()
+        self.subdepartment_combo.setToolTip("Show one subdepartment, or All")
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search name or id…")
-        self.active_only_check = QCheckBox("Active only")
+        self.search_edit.setToolTip("Filter by name or employee id")
 
-        self.department_combo.currentTextChanged.connect(self._apply_filters)
+        self.tabs = QTabBar()
+        self.tabs.addTab("Employees")
+        self.tabs.addTab("Archive")
+        self.tabs.setTabToolTip(0, "All current employees: available, or greyed out while temporarily not available")
+        self.tabs.setTabToolTip(1, "Archived: kept on file, but out of every schedule and rotation")
+        self.tabs.setExpanding(False)
+        self.tabs.currentChanged.connect(lambda _: self._on_tab_changed())
+
         self.subdepartment_combo.currentTextChanged.connect(self._apply_filters)
         self.search_edit.textChanged.connect(self._apply_filters)
-        self.active_only_check.toggled.connect(self._apply_filters)
 
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Department"))
-        filter_row.addWidget(self.department_combo)
         filter_row.addWidget(QLabel("Subdepartment"))
         filter_row.addWidget(self.subdepartment_combo)
         filter_row.addWidget(self.search_edit, 1)
-        filter_row.addWidget(self.active_only_check)
 
         self.model = EmployeeTableModel()
         self.table = QTableView()
@@ -256,19 +348,31 @@ class StaffPanel(QWidget):
         edit_button.clicked.connect(self._edit_employee)
         delete_button.clicked.connect(self._delete_employee)
 
+        # Archive on the Crew tab, Restore on the Archive tab.
+        self.archive_button = QPushButton("Archive")
+        self.archive_button.setToolTip("Move the selected employee to the Archive: out of every schedule and rotation")
+        self.archive_button.clicked.connect(self._toggle_archive)
+
         button_row = QHBoxLayout()
         button_row.addWidget(add_button)
         button_row.addWidget(edit_button)
         button_row.addWidget(delete_button)
+        button_row.addSpacing(12)
+        button_row.addWidget(self.archive_button)
         button_row.addStretch(1)
+        self._zoom = 0.0
+        self.zoom_control = ZoomControl(self.table, zoom)
+        self.zoom_control.zoom_changed.connect(self._on_zoom)
+        button_row.addWidget(self.zoom_control)
+        self._apply_zoom(self.zoom_control.zoom())
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.tabs)
         layout.addLayout(filter_row)
         layout.addLayout(button_row)
         layout.addWidget(self.table)
-
-        self._reload_filter_options()
-        self._apply_filters()
+        # Filled in showEvent, not here: nothing is read until the page is
+        # actually opened.
 
     def showEvent(self, event) -> None:  # noqa: N802
         """Re-read the Schedule aggregate every time this page is shown.
@@ -282,8 +386,7 @@ class StaffPanel(QWidget):
         self._apply_filters()
 
     def _reload_filter_options(self) -> None:
-        employees = self._schedule.employees(active_only=False)
-        self._set_combo_items(self.department_combo, sorted({e.department for e in employees}))
+        employees = self._department_employees()
         self._set_combo_items(self.subdepartment_combo, sorted({e.subdepartment for e in employees}))
 
     @staticmethod
@@ -298,21 +401,57 @@ class StaffPanel(QWidget):
         combo.blockSignals(False)
 
     def _apply_filters(self) -> None:
-        employees = self._schedule.employees(active_only=False)
-        department = self.department_combo.currentText()
+        employees = self._department_employees()
         subdepartment = self.subdepartment_combo.currentText()
         search = self.search_edit.text().strip().lower()
 
-        if department and department != "All":
-            employees = [e for e in employees if e.department == department]
         if subdepartment and subdepartment != "All":
             employees = [e for e in employees if e.subdepartment == subdepartment]
         if search:
             employees = [e for e in employees if search in e.full_name.lower() or search in e.id.lower()]
-        if self.active_only_check.isChecked():
-            employees = [e for e in employees if e.active]
+        archive = self._showing_archive()
+        employees = [e for e in employees if e.archived == archive]
 
         self.model.set_rows(employees)
+
+    def _apply_zoom(self, zoom: float) -> None:
+        apply_table_zoom(self.table, zoom, self._zoom)
+        self._zoom = zoom
+        self.table.verticalHeader().setDefaultSectionSize(round(30 * zoom))
+
+    def _on_zoom(self, zoom: float) -> None:
+        self._apply_zoom(zoom)
+        if self._on_zoom_changed:
+            self._on_zoom_changed(zoom)
+
+    def _department_employees(self) -> list[Employee]:
+        employees = self._schedule.employees(active_only=False)
+        return [e for e in employees if e.department == self._department] if self._department else employees
+
+    def _showing_archive(self) -> bool:
+        return self.tabs.currentIndex() == 1
+
+    def _on_tab_changed(self) -> None:
+        archive = self._showing_archive()
+        self.archive_button.setText("Restore" if archive else "Archive")
+        self.archive_button.setToolTip(
+            "Bring the selected employee back to Employees"
+            if archive
+            else "Move the selected employee to the Archive: out of every schedule and rotation"
+        )
+        self._apply_filters()
+
+    def _toggle_archive(self) -> None:
+        employee = self._selected_employee()
+        if employee is None:
+            QMessageBox.information(self, "No selection", "Select an employee first.")
+            return
+        employee.active = self._showing_archive()  # Restore on Archive tab, Archive on Crew tab
+        self._schedule.add_employee(employee)
+        self._repository.save_employee(employee)
+        self._apply_filters()
+        if self._on_change:
+            self._on_change()
 
     def _selected_employee(self) -> Employee | None:
         index = self.table.currentIndex()
@@ -328,10 +467,15 @@ class StaffPanel(QWidget):
         add_action = menu.addAction("Add employee")
         edit_action = menu.addAction("Edit employee")
         delete_action = menu.addAction("Delete employee")
+        menu.addSeparator()
+        archive_action = menu.addAction("Restore to Employees" if self._showing_archive() else "Move to archive")
         edit_action.setEnabled(row >= 0)
         delete_action.setEnabled(row >= 0)
+        archive_action.setEnabled(row >= 0)
         chosen = menu.exec(self.table.viewport().mapToGlobal(position))
-        if chosen is add_action:
+        if chosen is archive_action:
+            self._toggle_archive()
+        elif chosen is add_action:
             self._add_employee()
         elif chosen is edit_action:
             self._edit_employee()
@@ -339,7 +483,7 @@ class StaffPanel(QWidget):
             self._delete_employee()
 
     def _add_employee(self) -> None:
-        dialog = EmployeeDialog(self._repository, parent=self)
+        dialog = EmployeeDialog(self._repository, parent=self, preset_department=self._department)
         if dialog.exec() != QDialog.Accepted:
             return
         employee = dialog.employee()

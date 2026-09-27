@@ -85,6 +85,15 @@ _PATHS = {
         '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/>'
         '<circle cx="8" cy="8" r="1.5"/>'
     ),
+    # Hover actions on a Month-view day cell.
+    "pencil": (
+        '<path d="M4 20l1-4.5L15.5 5a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19z"/>'
+        '<line x1="13.5" y1="7" x2="17" y2="10.5"/>'
+    ),
+    "trash": (
+        '<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/>'
+        '<path d="M6 7l1 13h10l1-13"/>'
+    ),
     "shield": (
         '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/>'
         '<path d="M8.5 12l2.5 2.5 4.5-5"/>'

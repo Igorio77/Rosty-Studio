@@ -18,7 +18,7 @@ from ..base import ParamField, Rule, RuleViolation, Severity
 
 class CrewIdFormatRule(Rule):
     id = "crew_id_format"
-    name = "Employee id format"
+    name = "Employee ID format"
     description = "Flags assignments whose employee id doesn't match the configured pattern."
     default_severity = Severity.HARD
     param_schema = [
@@ -27,7 +27,7 @@ class CrewIdFormatRule(Rule):
             type="str",
             label="Regex pattern",
             default=r"^[0-9]+$",
-            help_text="Production default is digits-only, matching the source workbook's Crew ID rule.",
+            help_text="Production default is digits-only, matching the source workbook's employee ID rule.",
         ),
     ]
 
@@ -36,7 +36,7 @@ class CrewIdFormatRule(Rule):
         if not re.match(pattern, assignment.employee_id):
             return [
                 self.violation(
-                    f"Employee id '{assignment.employee_id}' does not match "
+                    f"Employee ID '{assignment.employee_id}' does not match "
                     f"the required pattern '{pattern}'.",
                     assignment_id=assignment.id,
                 )

@@ -3,12 +3,11 @@ category list on the left, the chosen category's cards on the right.
 
 Categories:
 
-* General        — workspace name.
+* General        — workspace name and the department it plans.
 * Appearance     — dark/light mode and the accent color (the reference's
                    Appearance section, reference/RostaStudioSchedule.jsx).
-* Lists          — Department / Subdepartment / Position lists
-                   (`list_control_panel.py`).
-* Position codes — the Location ID catalog (moved here from Templates).
+* Lists          — Department / Subdepartment / Position lists and the
+                   Location code catalog (`list_control_panel.py`).
 * Rules          — one card per rule, built entirely from each Rule's
                    `param_schema` (CLAUDE.md: "the settings UI builds its
                    form automatically from that schema"). Adding a rule
@@ -51,7 +50,6 @@ from rostify.services.persistence import Repository
 from .. import icons
 from ..theme import ACCENT_THEMES, COLORS, accent_swatch
 from .list_control_panel import ListControlPanel
-from .templates_panel import LocationIdsTab
 from .widgets import SettingsCard
 
 # Width of the readable column on the right. Wider than this and a label
@@ -60,6 +58,12 @@ _CONTENT_MAX_WIDTH = 760
 _NAV_WIDTH = 220
 _NAV_ITEM_HEIGHT = 36
 _SWATCH_SIZE = 28
+_CATEGORY_TIPS = {
+    "general": "Workspace name and department",
+    "appearance": "Dark or light mode and the accent color",
+    "lists": "Departments, subdepartments, positions and location codes",
+    "rules": "Scheduling rules: switch on/off, hard or soft, their settings",
+}
 
 
 def _make_param_widget(field: ParamField, value):
@@ -198,12 +202,13 @@ class SettingsPanel(QWidget):
     appearance_changed = Signal(str, str)
     #: Workspace name edited and saved.
     workspace_changed = Signal(str)
+    #: A different department picked. The owner rebuilds the pages for it.
+    department_changed = Signal(str)
 
     CATEGORIES = [
         ("general", "general", "General"),
         ("appearance", "palette", "Appearance"),
         ("lists", "list", "Lists"),
-        ("positions", "tag", "Position codes"),
         ("rules", "shield", "Rules"),
     ]
 
@@ -223,12 +228,13 @@ class SettingsPanel(QWidget):
         self._app_settings = app_settings or AppSettings()
         self._app_settings_path = app_settings_path
         self._rule_cards: list[RuleCard] = []
+        self._repository = repository
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_general_page())
         self.pages.addWidget(self._build_appearance_page())
-        self.pages.addWidget(_page(ListControlPanel(repository)))
-        self.pages.addWidget(self._build_positions_page(repository, on_location_codes_change))
+        self.lists = ListControlPanel(repository, on_location_codes_change=on_location_codes_change)
+        self.pages.addWidget(_page(self.lists))
         self.pages.addWidget(self._build_rules_page())
 
         layout = QHBoxLayout(self)
@@ -256,6 +262,7 @@ class SettingsPanel(QWidget):
         for key, icon_name, label in self.CATEGORIES:
             item = QListWidgetItem(icons.icon(icon_name, COLORS["text_secondary"], 18), label)
             item.setData(Qt.UserRole, key)
+            item.setToolTip(_CATEGORY_TIPS.get(key, ""))
             item.setSizeHint(QSize(0, _NAV_ITEM_HEIGHT))
             self.nav.addItem(item)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -285,7 +292,28 @@ class SettingsPanel(QWidget):
         self._workspace_edit.setPlaceholderText("e.g. the ship or casino name")
         self._workspace_edit.editingFinished.connect(self._save_workspace)
         card.body.addWidget(self._workspace_edit)
-        return _page(card)
+
+        department_card = SettingsCard(
+            "Department",
+            "Which department this workspace plans. Team, Templates and Schedule show only its "
+            "subdepartments and employees. Departments are added in Lists.",
+        )
+        self._department_combo = QComboBox()
+        self._department_combo.setToolTip("The department every page works with")
+        self._department_combo.addItems(self._repository.load_departments())
+        self._department_combo.setCurrentText(self._app_settings.department)
+        self._department_combo.setMaximumWidth(320)
+        self._department_combo.activated.connect(lambda _: self._save_department())
+        department_card.body.addWidget(self._department_combo)
+        return _page(card, department_card)
+
+    def _save_department(self) -> None:
+        name = self._department_combo.currentText()
+        if not name or name == self._app_settings.department:
+            return
+        self._app_settings.department = name
+        self._persist_app_settings()
+        self.department_changed.emit(name)
 
     def _save_workspace(self) -> None:
         name = self._workspace_edit.text().strip()
@@ -351,22 +379,6 @@ class SettingsPanel(QWidget):
     def _persist_app_settings(self) -> None:
         if self._app_settings_path is not None:
             save_app_settings(self._app_settings_path, self._app_settings)
-
-    # --- Position codes --------------------------------------------------------
-
-    def _build_positions_page(self, repository: Repository, on_change: Callable[[], None] | None) -> QWidget:
-        card = SettingsCard(
-            "Position codes",
-            "Short codes (B1, RW2, BR…) a supervisor picks in the Day view's rotation grid. "
-            "Right-click a row to edit or delete it.",
-        )
-        self.location_ids = LocationIdsTab(repository, on_change=on_change)
-        self.location_ids.setProperty("transparentBg", True)
-        self.location_ids.editor.setProperty("transparentBg", True)
-        self.location_ids.layout().setContentsMargins(0, 0, 0, 0)
-        self.location_ids.setMinimumHeight(420)
-        card.body.addWidget(self.location_ids)
-        return _page(card)
 
     # --- Rules -------------------------------------------------------------------
 

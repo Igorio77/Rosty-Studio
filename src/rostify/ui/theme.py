@@ -138,6 +138,16 @@ ACCENT_THEMES = {
 }
 
 
+#: Which neutral ramp is live, for the few painted widgets (the Month and
+#: Year calendars) that pick a different recipe in light mode rather than
+#: just a different token. Mutated by `apply_theme`.
+THEME = {"mode": "dark"}
+
+
+def is_dark() -> bool:
+    return THEME["mode"] != "light"
+
+
 def apply_theme(mode: str, accent: str) -> None:
     """Switch the active tokens to `mode` ("dark"/"light") and `accent`.
 
@@ -150,6 +160,7 @@ def apply_theme(mode: str, accent: str) -> None:
     accent_theme = ACCENT_THEMES.get(accent, ACCENT_THEMES["blue"])
     accent_hex, accent_hover, accent_on, accent_soft = accent_theme[mode if mode in _NEUTRALS else "dark"]
 
+    THEME["mode"] = mode if mode in _NEUTRALS else "dark"
     for step, value in enumerate(neutrals["surfaces"]):
         SURFACE[step] = value
     COLORS.update(
@@ -192,6 +203,31 @@ TEMPLATE_COLOR_HEX = {
     "red": "#f28b82",
     "purple": "#c58af9",
 }
+
+
+def qcolor(token: str, alpha: float | None = None):
+    """A color token as a QColor. Needed because tokens like `border` are
+    `rgba(...)` strings, which the stylesheet understands but QColor does
+    not — QColor("rgba(...)") silently gives an invalid (black) color."""
+    from PySide6.QtGui import QColor
+
+    if token.startswith("rgba("):
+        r, g, b, a = (part.strip() for part in token[5:-1].split(","))
+        color = QColor(int(r), int(g), int(b))
+        color.setAlphaF(float(a))
+    else:
+        color = QColor(token)
+    if alpha is not None:
+        color.setAlphaF(alpha)
+    return color
+
+
+def template_ink(hex_color: str) -> str:
+    """Readable text color for a template name drawn on its own tinted chip.
+    The template hues are pastel: fine as text on a dark surface, but on a
+    light one they wash out (amber on pale amber), so light mode darkens
+    them toward black."""
+    return hex_color if is_dark() else mix(hex_color, "#000000", 0.5)
 
 
 def mix(foreground: str, background: str, ratio: float) -> str:
@@ -668,6 +704,12 @@ def stylesheet() -> str:
         font-size: 16px;
         font-weight: 600;
         padding-left: 8px;
+    }}
+
+    /* Frozen columns laid over a grid's left edge (widgets.FrozenColumns). */
+    QTableView#frozenColumns {{
+        border: none;
+        border-right: 2px solid {c['border_strong']};
     }}
 
     /* ---------- Settings (category list + cards) ------------------------------ */

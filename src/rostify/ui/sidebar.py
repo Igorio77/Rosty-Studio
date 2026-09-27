@@ -52,6 +52,12 @@ BOTTOM_NAV_ITEMS = [
     ("settings", "settings", "Settings"),
 ]
 NAV_ITEMS = MAIN_NAV_ITEMS + BOTTOM_NAV_ITEMS
+_NAV_TIPS = {
+    "staff": "Team: employees, archive and availability",
+    "templates": "Templates: day plans and their shift timings",
+    "schedule": "Schedule: year, month, custom range and day rotation",
+    "settings": "Settings: workspace, appearance, lists and rules",
+}
 
 
 def _build_list(items: list[tuple[str, str, str]], icon_color: str) -> QListWidget:
@@ -65,6 +71,7 @@ def _build_list(items: list[tuple[str, str, str]], icon_color: str) -> QListWidg
     for key, icon_name, label in items:
         item = QListWidgetItem(icons.icon(icon_name, icon_color), label)
         item.setData(Qt.UserRole, key)
+        item.setToolTip(_NAV_TIPS.get(key, label))
         item.setSizeHint(QSize(0, ITEM_HEIGHT))
         lst.addItem(item)
     return lst
@@ -87,6 +94,11 @@ class Sidebar(QWidget):
 
         self.main_list = _build_list(MAIN_NAV_ITEMS, icon_color)
         self.bottom_list = _build_list(BOTTOM_NAV_ITEMS, icon_color)
+        # Exactly as tall as its items. Left to its default size hint, the
+        # list is ~200px tall with Settings at its top, so Settings floated
+        # mid-way up the sidebar and moved whenever the window was resized.
+        # 2px item margin + 4px list padding top and bottom, per theme.py.
+        self.bottom_list.setFixedHeight(len(BOTTOM_NAV_ITEMS) * (ITEM_HEIGHT + 2) + 8)
         # Only one of the two lists ever has a selection — clicking in one
         # clears the other, so there's a single visible "active" item across
         # both groups, same as the reference's single `activeItem` value.

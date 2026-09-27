@@ -11,6 +11,7 @@ and nothing steals focus.
     python .claude/skills/rostify-ui/scripts/shot.py schedule --show
     python .claude/skills/rostify-ui/scripts/shot.py --all --headless   # CI, no display
     python .claude/skills/rostify-ui/scripts/shot.py settings/rules settings/appearance --mode light --accent green
+    python .claude/skills/rostify-ui/scripts/shot.py schedule/year schedule/day   # calendar tabs
 
 Images land in <project>/.ui-shots/ (add it to .gitignore).
 
@@ -130,7 +131,10 @@ def main() -> int:
         written = []
         for key, category in pages:
             window.stack.setCurrentIndex(nav_keys.index(key))
-            if category:
+            if category and key == "schedule":
+                tabs = ["year", "month", "custom", "day"]
+                window.schedule_calendar_panel.setCurrentIndex(tabs.index(category))
+            elif category:
                 window.settings_panel.select_category(category)
             # Drive the sidebar the way a click does, so the captured nav
             # highlight matches the captured page. Settings lives in the

@@ -1,5 +1,5 @@
-"""App-wide preferences that are not scheduling rules: appearance and the
-workspace name. Stored in `data/app.yaml`, next to `rules.yaml`.
+"""App-wide preferences that are not scheduling rules: appearance, the
+workspace name and the Day/Custom grid zoom. Stored in `data/app.yaml`, next to `rules.yaml`.
 
 Plain data only — the UI decides what the values look like. No Qt here.
 """
@@ -13,6 +13,7 @@ import yaml
 
 THEME_MODES = ["dark", "light"]
 ACCENTS = ["blue", "green", "purple", "rose", "amber"]
+ZOOM_MIN, ZOOM_MAX = 0.5, 2.0
 
 
 @dataclass(slots=True)
@@ -20,6 +21,16 @@ class AppSettings:
     theme_mode: str = "dark"
     accent: str = "blue"
     workspace_name: str = "Casino"
+    # Grid zoom (1.0 = 100%), remembered per view.
+    day_zoom: float = 1.0
+    custom_zoom: float = 1.0
+    team_zoom: float = 1.0
+    templates_zoom: float = 1.0
+    # The department this workspace plans (Settings -> General). Empty
+    # means "the first one in Settings -> Lists".
+    department: str = ""
+    # Month view: is the Templates panel on the right open?
+    month_templates_panel: bool = True
 
 
 def load_app_settings(path: str | Path) -> AppSettings:
@@ -35,6 +46,14 @@ def load_app_settings(path: str | Path) -> AppSettings:
         settings.accent = data["accent"]
     if isinstance(data.get("workspace_name"), str) and data["workspace_name"].strip():
         settings.workspace_name = data["workspace_name"].strip()
+    if isinstance(data.get("department"), str):
+        settings.department = data["department"].strip()
+    if isinstance(data.get("month_templates_panel"), bool):
+        settings.month_templates_panel = data["month_templates_panel"]
+    for key in ("day_zoom", "custom_zoom", "team_zoom", "templates_zoom"):
+        value = data.get(key)
+        if isinstance(value, (int, float)) and ZOOM_MIN <= value <= ZOOM_MAX:
+            setattr(settings, key, float(value))
     return settings
 
 

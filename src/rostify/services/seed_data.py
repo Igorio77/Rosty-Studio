@@ -36,6 +36,7 @@ from rostify.core.templates import (
     ShiftId,
     ShiftSegment,
     ShiftTiming,
+    PositionOption,
     SubdepartmentOption,
     Template,
     TemplateAssignment,
@@ -106,12 +107,13 @@ def seed_location_codes() -> list[LocationCode]:
     return list(seen.values())
 
 
-def seed_lookup_lists() -> tuple[list[str], list[SubdepartmentOption], list[str]]:
+def seed_lookup_lists() -> tuple[list[str], list[SubdepartmentOption], list[PositionOption]]:
     """First-run seed for the Department / Subdepartment / Position lists."""
     subdepartments = [SubdepartmentOption(department=DEPARTMENT, name=name) for name, _, _ in _SUBDEPARTMENTS]
-    positions: list[str] = []
+    names: list[str] = []
     for _, _, subdepartment_positions in _SUBDEPARTMENTS:
-        positions.extend(p for p in subdepartment_positions if p not in positions)
+        names.extend(p for p in subdepartment_positions if p not in names)
+    positions = [PositionOption(department=DEPARTMENT, name=name) for name in names]
     return [DEPARTMENT], subdepartments, positions
 
 

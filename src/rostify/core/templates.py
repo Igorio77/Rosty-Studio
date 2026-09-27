@@ -20,9 +20,16 @@ No Qt imports here — see CLAUDE.md's layer boundaries.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
+
+
+def natural_key(text: str) -> list:
+    """Sort key that orders "2" before "10" and "CL2" before "CL10" — the
+    way people read shift codes and template names, not plain A-Z."""
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part.lower()) for part in re.split(r"(\d+)", text) if part]
 
 
 @dataclass(slots=True)
@@ -118,6 +125,18 @@ class SubdepartmentOption:
 
 
 @dataclass(slots=True)
+class PositionOption:
+    """One entry in the admin-managed Position list (Settings -> Lists).
+    Belongs to one Department, the same way a SubdepartmentOption does, so
+    the employee dialog only offers the positions of the chosen department.
+    """
+
+    department: str
+    name: str
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+
+@dataclass(slots=True)
 class TemplateAssignment:
     """Which Template is "the plan" for one subdepartment on one calendar
     day — the Custom view's "one Template per subdepartment per day" rule.
@@ -131,3 +150,14 @@ class TemplateAssignment:
     subdepartment: str
     date: date
     template_id: str
+
+
+@dataclass(slots=True)
+class CellNote:
+    """An Excel-style note on one Day-view cell: an employee at a moment in
+    the day. Stored by time, not by grid column, so it stays on the right
+    slot when the time step changes."""
+
+    employee_id: str
+    at: datetime
+    text: str

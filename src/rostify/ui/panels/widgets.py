@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -24,7 +25,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QPushButton,
+    QStyledItemDelegate,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -80,7 +84,7 @@ def color_dot_icon(hex_color: str, size: int = 10) -> QIcon:
 SHIFT_BADGE_SIZE = 28
 
 
-def shift_badge_button(code: str, hex_color: str | None, tooltip: str) -> QPushButton:
+def shift_badge_button(code: str, hex_color: str | None, tooltip: str, scale: float = 1.0) -> QPushButton:
     """The colored shift badge, shared by the Custom view roster and the Day
     view's Shift ID column so both read the same.
 
@@ -92,24 +96,149 @@ def shift_badge_button(code: str, hex_color: str | None, tooltip: str) -> QPushB
     Width grows past the 28px square for longer codes; `padding` is set
     explicitly because the global QPushButton rule pads 6px/12px, which
     leaves a fixed-height badge no room to draw its text at all.
+
+    `scale` is the grid's zoom factor, so the badge grows and shrinks with
+    the rows it sits in.
     """
+    size = max(round(SHIFT_BADGE_SIZE * scale), 16)
+    font_px = max(round(12 * scale), 8)
+    radius = max(round(8 * scale), 4)
     button = QPushButton(code or "+")
     button.setFlat(True)
-    button.setFixedHeight(SHIFT_BADGE_SIZE)
-    button.setMinimumWidth(SHIFT_BADGE_SIZE)
+    button.setFixedHeight(size)
+    button.setMinimumWidth(size)
     button.setCursor(Qt.PointingHandCursor)
     button.setToolTip(tooltip)
     if code and hex_color:
         button.setStyleSheet(
-            f"border: none; padding: 2px 6px; border-radius: 8px; font-size: 12px; font-weight: 700; "
+            f"border: none; padding: 2px 6px; border-radius: {radius}px; font-size: {font_px}px; font-weight: 700; "
             f"background: {hex_color}; color: {COLORS['chip_on']};"
         )
     else:
         button.setStyleSheet(
-            f"border: 1px dashed {COLORS['border_strong']}; padding: 2px 6px; border-radius: 8px; "
-            f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']}; background: transparent;"
+            f"border: 1px dashed {COLORS['border_strong']}; padding: 2px 6px; border-radius: {radius}px; "
+            f"font-size: {font_px}px; font-weight: 700; color: {COLORS['text_secondary']}; background: transparent;"
         )
     return button
+
+
+def centered_in_cell(widget: QWidget) -> QWidget:
+    """Wrap a widget so it sits in the middle of a table cell. A widget set
+    straight into a cell with setCellWidget hugs the cell's left edge."""
+    holder = QWidget()
+    holder.setProperty("transparentBg", True)
+    layout = QHBoxLayout(holder)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(widget, 0, Qt.AlignCenter)
+    return holder
+
+
+#: Zoom levels for the Day and Custom grids, the same stops Excel's zoom
+#: menu steps through.
+ZOOM_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+BASE_FONT_PX = 13
+
+
+def clamp_zoom(value: float) -> float:
+    return min(max(float(value), ZOOM_STEPS[0]), ZOOM_STEPS[-1])
+
+
+class ZoomControl(QWidget):
+    """"−  100%  +" beside a grid, plus Ctrl+mouse-wheel and Ctrl+= / Ctrl+-
+    / Ctrl+0 on the grid itself. Emits `zoom_changed` with the new factor;
+    the panel re-renders the grid at that size and the owner saves it, so
+    the zoom is remembered next time.
+    """
+
+    zoom_changed = Signal(float)
+
+    def __init__(self, table: QTableWidget, zoom: float = 1.0, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._zoom = clamp_zoom(zoom)
+
+        minus = icon_button("−", "Zoom out (Ctrl+-, or Ctrl+mouse wheel)")
+        plus = icon_button("+", "Zoom in (Ctrl+=, or Ctrl+mouse wheel)")
+        self._label = QPushButton()
+        self._label.setFlat(True)
+        self._label.setToolTip("Reset zoom to 100% (Ctrl+0)")
+        self._label.setFixedWidth(chars_width(self, 5))
+        self._label.setStyleSheet("padding: 2px; border: none;")
+        minus.clicked.connect(lambda: self.step(-1))
+        plus.clicked.connect(lambda: self.step(1))
+        self._label.clicked.connect(lambda: self.set_zoom(1.0))
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(minus)
+        layout.addWidget(self._label)
+        layout.addWidget(plus)
+        self._update_label()
+
+        self._filter = _ZoomKeys(self)
+        table.installEventFilter(self._filter)
+        table.viewport().installEventFilter(self._filter)
+
+    def zoom(self) -> float:
+        return self._zoom
+
+    def step(self, direction: int) -> None:
+        if direction > 0:
+            bigger = [z for z in ZOOM_STEPS if z > self._zoom + 1e-6]
+            self.set_zoom(bigger[0] if bigger else ZOOM_STEPS[-1])
+        else:
+            smaller = [z for z in ZOOM_STEPS if z < self._zoom - 1e-6]
+            self.set_zoom(smaller[-1] if smaller else ZOOM_STEPS[0])
+
+    def set_zoom(self, value: float) -> None:
+        value = clamp_zoom(value)
+        if abs(value - self._zoom) < 1e-6:
+            return
+        self._zoom = value
+        self._update_label()
+        self.zoom_changed.emit(value)
+
+    def _update_label(self) -> None:
+        self._label.setText(f"{round(self._zoom * 100)}%")
+
+
+class _ZoomKeys(QObject):
+    """Ctrl+wheel and the Ctrl+= / Ctrl+- / Ctrl+0 keys on a grid."""
+
+    def __init__(self, control: ZoomControl) -> None:
+        super().__init__(control)
+        self._control = control
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+            self._control.step(1 if event.angleDelta().y() > 0 else -1)
+            return True
+        if event.type() == QEvent.KeyPress and event.modifiers() & Qt.ControlModifier:
+            if event.key() in (Qt.Key_Plus, Qt.Key_Equal):
+                self._control.step(1)
+                return True
+            if event.key() == Qt.Key_Minus:
+                self._control.step(-1)
+                return True
+            if event.key() == Qt.Key_0:
+                self._control.set_zoom(1.0)
+                return True
+        return False
+
+
+def apply_table_zoom(table: QTableWidget, zoom: float, previous: float) -> None:
+    """Set a grid's text size for `zoom`, and scale every column width by
+    the change, so widths the user dragged keep their proportions."""
+    font_px = max(round(BASE_FONT_PX * zoom), 7)
+    table.setStyleSheet(
+        f"QTableView {{ font-size: {font_px}px; }} QHeaderView::section {{ font-size: {font_px}px; }}"
+    )
+    table.ensurePolished()
+    if previous and abs(zoom - previous) > 1e-6:
+        header = table.horizontalHeader()
+        ratio = zoom / previous
+        for col in range(header.count()):
+            header.resizeSection(col, max(round(header.sectionSize(col) * ratio), 12))
 
 
 class SettingsCard(QFrame):
@@ -166,6 +295,25 @@ def chars_width(widget: QWidget, characters: int = 20) -> int:
     return QFontMetrics(widget.font()).horizontalAdvance("0" * characters) + 16
 
 
+class _NewRowHintDelegate(QStyledItemDelegate):
+    """Paints a grey hint ("Type a new code…") in the empty cell of the
+    table's last, blank "new row" — a QTableWidgetItem has no placeholder
+    text of its own, and real text there would end up inside the editor."""
+
+    def __init__(self, hint: str, is_new_row: Callable[[int], bool], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hint = hint
+        self._is_new_row = is_new_row
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        if index.column() == 0 and self._is_new_row(index.row()) and not index.data():
+            painter.save()
+            painter.setPen(QColor(COLORS["text_tertiary"]))
+            painter.drawText(option.rect, Qt.AlignCenter, self._hint)
+            painter.restore()
+
+
 class IconTableEditor(QWidget):
     """A QTableWidget plus an add/edit/delete icon-button row.
 
@@ -173,8 +321,13 @@ class IconTableEditor(QWidget):
     for any particular list (which dialog to open, which repository call to
     make); the caller supplies that as three callbacks. That's what lets
     one widget serve Departments (1 column), Subdepartments (2 columns),
-    Positions (1 column) and Location IDs (4 columns) without forcing a
+    Positions (2 columns) and Location codes (4 columns) without forcing a
     shared row shape.
+
+    Pass `on_cell_edited` to allow typing straight into the cells (double-
+    click, Enter or just start typing). The table then also shows one blank
+    row at the bottom: typing into it adds a new entry. The callback gets
+    (row, column, text); `row == row_count` means that new row.
     """
 
     def __init__(
@@ -184,12 +337,17 @@ class IconTableEditor(QWidget):
         on_edit: Callable[[int], None],
         on_delete: Callable[[int], None],
         parent: QWidget | None = None,
+        on_cell_edited: Callable[[int, int, str], None] | None = None,
+        new_row_hint: str = "Type to add…",
     ) -> None:
         super().__init__(parent)
 
         self._on_add = on_add
         self._on_edit = on_edit
         self._on_delete = on_delete
+        self._on_cell_edited = on_cell_edited
+        self._row_count = 0  # real rows, not counting the blank new row
+        self._filling = False  # set_rows is writing cells, not the user
 
         self.table = QTableWidget()
         self.table.setColumnCount(len(headers))
@@ -204,7 +362,16 @@ class IconTableEditor(QWidget):
         default_width = chars_width(self.table, 20)
         for column in range(len(headers)):
             self.table.horizontalHeader().resizeSection(column, default_width)
-        self.table.doubleClicked.connect(lambda _: self._with_selected(on_edit))
+        if on_cell_edited is None:
+            self.table.doubleClicked.connect(lambda _: self._with_selected(on_edit))
+        else:
+            self.table.setEditTriggers(
+                QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed | QAbstractItemView.AnyKeyPressed
+            )
+            self.table.setItemDelegate(
+                _NewRowHintDelegate(new_row_hint, lambda row: row == self._row_count, self.table)
+            )
+            self.table.itemChanged.connect(self._on_item_changed)
         # Right-click is a second way to add/edit/delete, alongside the icon
         # row above — same three actions, so the icons stay the discoverable
         # default but a mouse-only flow doesn't need them once it's learned.
@@ -229,21 +396,47 @@ class IconTableEditor(QWidget):
         layout.addWidget(self.table)
 
     def set_rows(self, rows: list[tuple[str, ...]]) -> None:
-        self.table.setRowCount(len(rows))
-        for row_index, values in enumerate(rows):
-            for col_index, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                item.setTextAlignment(Qt.AlignCenter)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                self.table.setItem(row_index, col_index, item)
+        editable = self._on_cell_edited is not None
+        self._row_count = len(rows)
+        self._filling = True
+        try:
+            self.table.setRowCount(len(rows) + (1 if editable else 0))
+            for row_index, values in enumerate(rows):
+                for col_index, value in enumerate(values):
+                    self.table.setItem(row_index, col_index, self._make_item(str(value), editable))
+            if editable:
+                # The blank new row: only its first cell is editable, the
+                # rest fill in once that first value exists.
+                for col_index in range(self.table.columnCount()):
+                    self.table.setItem(len(rows), col_index, self._make_item("", col_index == 0))
+        finally:
+            self._filling = False
+
+    @staticmethod
+    def _make_item(text: str, editable: bool) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignCenter)
+        if not editable:
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        return item
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._filling or self._on_cell_edited is None:
+            return
+        # Deferred: the callback usually reloads the table, and replacing
+        # items from inside their own itemChanged signal can crash Qt.
+        row, column, text = item.row(), item.column(), item.text().strip()
+        QTimer.singleShot(0, lambda: self._on_cell_edited(row, column, text))
 
     def _with_selected(self, callback: Callable[[int], None]) -> None:
         row = self.table.currentRow()
-        if row >= 0:
+        if 0 <= row < self._row_count:
             callback(row)
 
     def _show_context_menu(self, position) -> None:
         row = self.table.rowAt(position.y())
+        if row >= self._row_count:
+            row = -1  # the blank new row has nothing to edit or delete
         if row >= 0:
             self.table.selectRow(row)
         menu = QMenu(self.table)
@@ -359,3 +552,110 @@ class DepartmentSubdepartmentSelector(QWidget):
 
     def current_subdepartment(self) -> str:
         return self.subdepartment_combo.currentText().strip()
+
+
+class FrozenColumns(QObject):
+    """Excel's "freeze panes" for the first `count` columns of a table.
+
+    A second view is laid over the table's left edge, sharing its model and
+    its selection, showing only the frozen columns. It scrolls up and down
+    with the table but never sideways, so names and ids stay visible while
+    a wide timeline scrolls underneath. Widgets that belong in a frozen
+    column (e.g. shift badges) go on this view — `set_cell_widget` — not on
+    the table. Call `sync()` after every re-render.
+    """
+
+    def __init__(self, table: QTableWidget, count: int) -> None:
+        super().__init__(table)
+        self._table = table
+        self._count = count
+        view = QTableView(table)
+        view.setObjectName("frozenColumns")
+        view.setModel(table.model())
+        view.setSelectionModel(table.selectionModel())
+        view.setFocusPolicy(Qt.NoFocus)
+        view.verticalHeader().hide()
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollMode(table.verticalScrollMode())
+        view.setSelectionBehavior(table.selectionBehavior())
+        view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        view.setWordWrap(table.wordWrap())
+        view.setFrameShape(QFrame.NoFrame)
+        view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        view.horizontalHeader().setHighlightSections(False)
+        self.view = view
+        self._syncing = False
+
+        table.verticalScrollBar().valueChanged.connect(view.verticalScrollBar().setValue)
+        view.verticalScrollBar().valueChanged.connect(table.verticalScrollBar().setValue)
+        table.horizontalHeader().sectionResized.connect(self._table_column_resized)
+        view.horizontalHeader().sectionResized.connect(self._frozen_column_resized)
+        table.verticalHeader().sectionResized.connect(lambda row, _old, new: view.setRowHeight(row, new))
+        table.installEventFilter(self)
+        view.show()
+        self.sync()
+
+    def set_cell_widget(self, row: int, column: int, widget: QWidget) -> None:
+        self.view.setIndexWidget(self._table.model().index(row, column), widget)
+
+    def sync(self) -> None:
+        """Columns, spans, row heights and position after the table changed."""
+        table, view = self._table, self.view
+        self._syncing = True
+        try:
+            for column in range(table.columnCount()):
+                view.setColumnHidden(column, column >= self._count)
+                if column < self._count:
+                    view.setColumnWidth(column, table.columnWidth(column))
+            view.clearSpans()
+            for row in range(table.rowCount()):
+                view.setRowHeight(row, table.rowHeight(row))
+                span = table.columnSpan(row, 0)
+                if span > 1:
+                    view.setSpan(row, 0, 1, min(span, self._count))
+        finally:
+            self._syncing = False
+        self._place()
+
+    def _table_column_resized(self, column: int, _old: int, new: int) -> None:
+        if column < self._count and not self._syncing:
+            self.view.setColumnWidth(column, new)
+            self._place()
+
+    def _frozen_column_resized(self, column: int, _old: int, new: int) -> None:
+        if column < self._count and not self._syncing:
+            self._table.setColumnWidth(column, new)
+            self._place()
+
+    def _place(self) -> None:
+        table = self._table
+        header_height = table.horizontalHeader().height()
+        self.view.horizontalHeader().setFixedHeight(header_height)
+        width = sum(table.columnWidth(c) for c in range(min(self._count, table.columnCount())))
+        frame = table.frameWidth()
+        x = frame + (table.verticalHeader().width() if table.verticalHeader().isVisible() else 0)
+        self.view.setGeometry(x, frame, width, table.viewport().height() + header_height)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self._table and event.type() in (QEvent.Resize, QEvent.Show, QEvent.LayoutRequest):
+            self._place()
+        return False
+
+
+def show_shift_error(parent: QWidget, error, open_timing: Callable | None = None) -> None:
+    """Tell the user why a shift was not assigned. When the fix is a
+    missing timing, offer "Open in Templates", which jumps straight to that
+    Shift ID in the day's template (`open_timing(group, code, day)`)."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Shift not assigned")
+    box.setText(str(error))
+    jump = None
+    if getattr(error, "missing_timing", False) and open_timing is not None:
+        jump = box.addButton("Open in Templates", QMessageBox.AcceptRole)
+        jump.setToolTip("Go to this Shift ID in the day's template and set its timing")
+    box.addButton(QMessageBox.Close)
+    box.exec()
+    if jump is not None and box.clickedButton() is jump:
+        open_timing(error.group, error.code, error.day)
